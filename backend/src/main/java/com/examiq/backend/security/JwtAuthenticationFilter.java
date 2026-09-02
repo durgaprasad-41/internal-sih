@@ -1,14 +1,11 @@
 package com.examiq.backend.security;
 
-import com.examiq.backend.dto.ApiResponse;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -24,14 +21,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
     private final UserDetailsServiceImpl userDetailsService;
-    private final ObjectMapper objectMapper;
+    private final SecurityResponseWriter responseWriter;
 
     @Autowired
     public JwtAuthenticationFilter(JwtService jwtService, UserDetailsServiceImpl userDetailsService,
-            ObjectMapper objectMapper) {
+            SecurityResponseWriter responseWriter) {
         this.jwtService = jwtService;
         this.userDetailsService = userDetailsService;
-        this.objectMapper = objectMapper;
+        this.responseWriter = responseWriter;
     }
 
     @Override
@@ -65,17 +62,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 }
             } catch (JwtException | IllegalArgumentException | AuthenticationException ex) {
                 SecurityContextHolder.clearContext();
-                sendUnauthorized(response, "Invalid or expired authentication token");
+                responseWriter.writeError(response, HttpServletResponse.SC_UNAUTHORIZED,
+                        "Invalid or expired authentication token");
                 return;
             }
         }
 
         filterChain.doFilter(request, response);
-    }
-
-    private void sendUnauthorized(HttpServletResponse response, String message) throws IOException {
-        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        response.getWriter().write(objectMapper.writeValueAsString(ApiResponse.error(message)));
     }
 }

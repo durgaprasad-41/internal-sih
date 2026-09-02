@@ -86,6 +86,15 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Lets Jackson serialize JPA entities with uninitialized lazy associations
+             (e.g. Rating/Bookmark returned directly by controllers) instead of
+             throwing on the Hibernate proxy type. Auto-configured by Spring Boot
+             once present on the classpath. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-hibernate6</artifactId>
+        </dependency>
+
         <!-- Testing -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
