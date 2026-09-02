@@ -7,7 +7,6 @@ import com.examiq.backend.dto.SmartRevisionStudyBlockDto;
 import com.examiq.backend.dto.SmartRevisionTopicDto;
 import com.examiq.backend.entity.Question;
 import com.examiq.backend.entity.Subject;
-import com.examiq.backend.repository.SubjectRepository;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -35,12 +34,17 @@ public class SmartRevisionService {
             "HARD", 20);
     private static final int DEFAULT_MINUTES = 15;
 
-    private final SubjectRepository subjectRepository;
-    private final QuestionAnalysisService questionAnalysisService;
+    private static final double MUST_STUDY_THRESHOLD = 65.0;
 
-    public SmartRevisionService(SubjectRepository subjectRepository, QuestionAnalysisService questionAnalysisService) {
-        this.subjectRepository = subjectRepository;
+    private final QuestionAnalysisService questionAnalysisService;
+    private final AiQuestionGenerationService aiQuestionGenerationService;
+    private final PaperService paperService;
+
+    public SmartRevisionService(QuestionAnalysisService questionAnalysisService,
+            AiQuestionGenerationService aiQuestionGenerationService, PaperService paperService) {
         this.questionAnalysisService = questionAnalysisService;
+        this.aiQuestionGenerationService = aiQuestionGenerationService;
+        this.paperService = paperService;
     }
 
     public SmartRevisionResponseDto recommend(SmartRevisionRequest request) {
@@ -155,6 +159,44 @@ public class SmartRevisionService {
             remainingMinutes -= minutes;
         }
 
+        // 4b. Syllabus-coverage fallback: a topic with zero verified questions
+        // stays listed in uncoveredTopics (an honest "no historical data"
+        // signal), but - so the student never fully skips a unit just because
+        // no past paper happened to cover it - we also generate one clearly
+        // AI-labeled practice question per such topic, time budget permitting.
+        // This is never presented as a real past-exam question.
+        for (SmartRevisionTopicDto uncovered : uncoveredTopics) {
+            if (remainingMinutes < DEFAULT_MINUTES) {
+                break;
+            }
+            String topic = uncovered.getTopic();
+            List<AiQuestionGenerationService.GeneratedQuestion> generated = aiQuestionGenerationService.generate(
+                    displayName(subject), topic, "MEDIUM", 5, 1,
+                    "Practice question for syllabus coverage - no verified past-paper question was found for this topic.");
+            if (generated.isEmpty()) {
+                continue;
+            }
+            AiQuestionGenerationService.GeneratedQuestion gq = generated.get(0);
+            SmartRevisionQuestionDto dto = new SmartRevisionQuestionDto();
+            dto.setQuestionId(null);
+            dto.setQuestionText(gq.text());
+            dto.setTopic(topic);
+            dto.setMarks(gq.marks());
+            dto.setDifficulty(gq.difficulty());
+            dto.setPriorityScore(null);
+            dto.setPriorityCategory("SYLLABUS COVERAGE");
+            dto.setTier("SYLLABUS_COVERAGE");
+            dto.setSource("AI_GENERATED");
+            dto.setEstimatedMinutes(DEFAULT_MINUTES);
+            dto.setReason("No verified question exists for '" + topic + "' in the approved-paper question bank yet. "
+                    + "This is an AI-generated practice question so you still cover this topic, not a record of a "
+                    + "real past exam question.");
+            dto.setSourcePaperTitle(null);
+            recommended.add(dto);
+            selectedCountByTopic.merge(topic, 1, Integer::sum);
+            remainingMinutes -= DEFAULT_MINUTES;
+        }
+
         for (SmartRevisionTopicDto dto : topicPriorities) {
             int selected = selectedCountByTopic.getOrDefault(dto.getTopic(), 0);
             dto.setSelectedQuestionCount(selected);
@@ -207,7 +249,8 @@ public class SmartRevisionService {
             block.setLabel("Block " + blockNumber++);
             block.setMinutes(minutes);
             block.setTopic(entry.getKey());
-            block.setQuestionIds(entry.getValue().stream().map(SmartRevisionQuestionDto::getQuestionId).toList());
+            block.setQuestionIds(entry.getValue().stream().map(SmartRevisionQuestionDto::getQuestionId)
+                    .filter(java.util.Objects::nonNull).toList());
             block.setNote(entry.getValue().size() + " question(s) covering " + entry.getKey());
             blocks.add(block);
         }
@@ -269,6 +312,8 @@ public class SmartRevisionService {
         dto.setDifficulty(sq.question.getDifficultyLevel());
         dto.setPriorityScore(sq.score);
         dto.setPriorityCategory(sq.score >= 70 ? "HIGH PRIORITY" : sq.score >= 40 ? "MEDIUM PRIORITY" : "LOW PRIORITY");
+        dto.setTier(sq.score >= MUST_STUDY_THRESHOLD ? "MUST_STUDY" : "HIGH_PRIORITY");
+        dto.setSource("QUESTION_BANK");
         dto.setEstimatedMinutes(minutes);
         dto.setReason(sq.reason + " " + selectionReason);
         dto.setSourcePaperTitle(sq.question.getPaper() != null ? sq.question.getPaper().getTitle() : null);
@@ -287,11 +332,15 @@ public class SmartRevisionService {
         if (subjectName == null || subjectName.isBlank()) {
             throw new IllegalArgumentException("Subject is required");
         }
-        String trimmed = subjectName.trim();
-        return subjectRepository.findByNameIgnoreCase(trimmed)
-                .or(() -> subjectRepository.findByCanonicalNameIgnoreCase(trimmed))
+        // Same resolution paper search already uses: exact name/canonical
+        // name, a configured alias (e.g. "DBMS"), or an acronym (e.g. "LAFA"
+        // for "Linear Algebra And Function Approximation") - so typing a
+        // short form here works exactly like it does in Smart Paper Search.
+        return paperService.resolveSubjectByNameAliasOrAcronym(subjectName)
                 .orElseThrow(() -> new IllegalArgumentException(
-                        "Unknown subject '" + trimmed + "'. Choose a subject that already has papers in the system."));
+                        "Unknown subject '" + subjectName.trim()
+                                + "'. Choose a subject that already has papers in the system, or use its exact name, "
+                                + "a configured alias, or its acronym."));
     }
 
     private String displayName(Subject subject) {

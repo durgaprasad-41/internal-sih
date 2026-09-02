@@ -31,6 +31,34 @@ export default function SmartRevisionPage() {
     );
   };
 
+  const TIERS = [
+    { key: 'MUST_STUDY', label: 'Must Study', emoji: '🔥', accent: 'border-red-400 bg-red-50' },
+    { key: 'HIGH_PRIORITY', label: 'High Priority', emoji: '⭐', accent: 'border-amber-400 bg-amber-50' },
+    { key: 'SYLLABUS_COVERAGE', label: 'Syllabus Coverage', emoji: '📘', accent: 'border-blue-300 bg-blue-50' }
+  ];
+
+  const groupByTier = (questions) => {
+    const groups = { MUST_STUDY: [], HIGH_PRIORITY: [], SYLLABUS_COVERAGE: [] };
+    questions.forEach((q) => {
+      (groups[q.tier] || groups.HIGH_PRIORITY).push(q);
+    });
+    return groups;
+  };
+
+  const groupByMarks = (questions) => {
+    const groups = {};
+    questions.forEach((q) => {
+      const key = q.marks != null ? String(q.marks) : 'Unspecified';
+      groups[key] = groups[key] || [];
+      groups[key].push(q);
+    });
+    return Object.entries(groups).sort((a, b) => {
+      if (a[0] === 'Unspecified') return 1;
+      if (b[0] === 'Unspecified') return -1;
+      return Number(a[0]) - Number(b[0]);
+    });
+  };
+
   const handleGenerate = async (e) => {
     e.preventDefault();
     setError('');
@@ -54,21 +82,31 @@ export default function SmartRevisionPage() {
     }
 
     setLoading(true);
+    const payload = {
+      subject: subject.trim(),
+      topics,
+      availableMinutes: minutes,
+      targetMarks: targetMarks ? Number(targetMarks) : null,
+      examDate: examDate || null
+    };
     try {
-      const response = await axios.post(
-        `${API_BASE_URL}/student/smart-revision`,
-        {
-          subject: subject.trim(),
-          topics,
-          availableMinutes: minutes,
-          targetMarks: targetMarks ? Number(targetMarks) : null,
-          examDate: examDate || null
-        },
-        { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
-      );
+      console.log('[SmartRevisionPage] POST /student/smart-revision', payload);
+      const response = await axios.post(`${API_BASE_URL}/student/smart-revision`, payload, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+      console.log('[SmartRevisionPage] response', response.data);
       setPlan(response.data.data);
     } catch (err) {
-      setError(err.response?.data?.message || 'Unable to generate a revision plan.');
+      console.error('[SmartRevisionPage] request failed', err);
+      if (err.response) {
+        // The server responded with an error (e.g. unknown subject) - show
+        // its actual message, never a generic "network error" for this case.
+        setError(err.response.data?.message || `Server returned ${err.response.status}.`);
+      } else if (err.request) {
+        setError('Could not reach the server. Check your connection and that the backend is running, then try again.');
+      } else {
+        setError('Unable to generate a revision plan.');
+      }
     } finally {
       setLoading(false);
     }
@@ -80,7 +118,7 @@ export default function SmartRevisionPage() {
         <div className="mb-8 flex items-center justify-between rounded-2xl bg-slate-900 px-6 py-4 text-white">
           <div>
             <p className="text-xs uppercase tracking-[0.25em] text-blue-300">EXAMIQ</p>
-            <h1 className="mt-1 text-2xl font-bold">Smart Revision</h1>
+            <h1 className="mt-1 text-2xl font-bold">Smart Revision · Probable Question Predictor</h1>
           </div>
           <button className="btn-secondary bg-slate-800 text-white border-slate-700" onClick={() => navigate('/student')}>
             Back to dashboard
@@ -90,7 +128,9 @@ export default function SmartRevisionPage() {
         <form onSubmit={handleGenerate} className="card mb-6 space-y-4">
           <p className="text-sm text-slate-500">
             Short on time before an exam? Tell us your subject, the topics you still need to cover, and how much
-            time you have - we'll recommend a focused, data-driven set of the most important questions to study.
+            time you have - we'll rank the most probable questions to study, based on how often similar questions
+            appeared in real approved papers. These are data-driven priorities, not a guarantee of the exact
+            questions that will appear.
           </p>
           <div className="grid gap-4 md:grid-cols-2">
             <div>
@@ -198,6 +238,11 @@ export default function SmartRevisionPage() {
             {plan.uncoveredTopics.length > 0 && (
               <div className="card mb-6 border-l-4 border-amber-400">
                 <h2 className="mb-2 text-lg font-semibold">Coverage gaps</h2>
+                <p className="mb-2 text-xs text-slate-500">
+                  No approved paper in the system yet has a verified question for these topics. Where time allowed,
+                  we still added a 📘 Syllabus Coverage practice question above so you don't skip the topic entirely -
+                  but treat it as a study aid, not a real past-exam question.
+                </p>
                 {plan.uncoveredTopics.map((t) => (
                   <p key={t.topic} className="text-sm text-slate-600">
                     <span className="font-medium">{t.topic}:</span> {t.reason}
@@ -206,33 +251,86 @@ export default function SmartRevisionPage() {
               </div>
             )}
 
-            <div className="card mb-6">
-              <h2 className="mb-3 text-lg font-semibold">Recommended questions</h2>
-              {plan.recommendedQuestions.length === 0 ? (
+            {plan.recommendedQuestions.length === 0 ? (
+              <div className="card mb-6">
+                <h2 className="mb-3 text-lg font-semibold">Your exam strategy</h2>
                 <p className="text-slate-500">
                   No recommendations could be generated - there isn't enough verified question data yet for the
                   selected topics.
                 </p>
-              ) : (
-                <div className="space-y-3">
-                  {plan.recommendedQuestions.map((q, idx) => (
-                    <div key={q.questionId} className="rounded-xl border border-slate-200 p-4">
-                      <p className="text-sm text-slate-500">
-                        Q{idx + 1} · Topic: {q.topic} {q.marks != null && `· ${q.marks} marks`} · ~{q.estimatedMinutes} min
-                      </p>
-                      <p className="mt-1 text-slate-900">{q.questionText}</p>
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
-                          {q.priorityCategory}
-                        </span>
-                        <span className="text-xs text-slate-500">Score: {q.priorityScore}/100</span>
-                      </div>
-                      <p className="mt-2 text-xs italic text-slate-500">{q.reason}</p>
-                    </div>
-                  ))}
+              </div>
+            ) : (
+              <>
+                <div className="card mb-6">
+                  <h2 className="mb-3 text-lg font-semibold">🎯 Your exam strategy</h2>
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    {TIERS.map((tier) => {
+                      const count = groupByTier(plan.recommendedQuestions)[tier.key].length;
+                      return (
+                        <div key={tier.key} className={`rounded-xl border-l-4 p-4 ${tier.accent}`}>
+                          <p className="font-semibold text-slate-900">{tier.emoji} {tier.label}</p>
+                          <p className="text-2xl font-bold text-slate-900">{count}</p>
+                          <p className="text-xs text-slate-500">question{count === 1 ? '' : 's'}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-3 text-xs text-slate-500">
+                    Total recommended preparation: {plan.recommendedQuestions.length} question
+                    {plan.recommendedQuestions.length === 1 ? '' : 's'} in ~{plan.estimatedStudyMinutes} minutes.
+                  </p>
                 </div>
-              )}
-            </div>
+
+                {TIERS.map((tier) => {
+                  const questions = groupByTier(plan.recommendedQuestions)[tier.key];
+                  if (questions.length === 0) return null;
+                  return (
+                    <div key={tier.key} className="card mb-6">
+                      <h2 className="mb-3 text-lg font-semibold">
+                        {tier.emoji} {tier.label} <span className="text-sm font-normal text-slate-500">({questions.length})</span>
+                      </h2>
+                      <div className="space-y-3">
+                        {questions.map((q, idx) => (
+                          <div key={q.questionId ?? `${tier.key}-${idx}`} className="rounded-xl border border-slate-200 p-4">
+                            <p className="text-sm text-slate-500">
+                              Topic: {q.topic} {q.marks != null && `· ${q.marks} marks`} · ~{q.estimatedMinutes} min
+                            </p>
+                            <p className="mt-1 text-slate-900">{q.questionText}</p>
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              {q.source === 'AI_GENERATED' ? (
+                                <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
+                                  AI-generated · no past-paper match
+                                </span>
+                              ) : (
+                                <>
+                                  <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
+                                    {q.priorityCategory}
+                                  </span>
+                                  <span className="text-xs text-slate-500">Confidence score: {q.priorityScore}/100</span>
+                                </>
+                              )}
+                            </div>
+                            <p className="mt-2 text-xs italic text-slate-500">{q.reason}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                <div className="card mb-6">
+                  <h2 className="mb-3 text-lg font-semibold">Marks-wise breakdown</h2>
+                  <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                    {groupByMarks(plan.recommendedQuestions).map(([marks, questions]) => (
+                      <div key={marks} className="rounded-lg border border-slate-200 p-3">
+                        <p className="text-sm text-slate-500">{marks === 'Unspecified' ? 'Marks unspecified' : `${marks} marks`}</p>
+                        <p className="text-xl font-bold text-slate-900">{questions.length}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
 
             {plan.studyPlan.length > 0 && (
               <div className="card">
