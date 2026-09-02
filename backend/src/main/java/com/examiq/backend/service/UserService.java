@@ -92,7 +92,14 @@ public class UserService {
 
         if (isAdmin(user)) {
             String otp = adminOtpService.generateAndStore(user.getUsername());
-            emailService.sendOtpEmail(user.getEmail(), otp);
+            try {
+                emailService.sendOtpEmail(user.getEmail(), otp);
+            } catch (RuntimeException e) {
+                // Never leave an undeliverable code active - the admin can't
+                // possibly know it, so it should not be usable by anyone else.
+                adminOtpService.invalidate(user.getUsername());
+                throw e;
+            }
 
             AuthResponse response = new AuthResponse();
             response.setOtpRequired(true);

@@ -58,6 +58,11 @@ public class AdminOtpService {
         return false;
     }
 
+    /** Removes any stored code for this user - used when the OTP could not be emailed, so a stale, undeliverable code is never left behind. */
+    public void invalidate(String username) {
+        store.remove(key(username));
+    }
+
     private String key(String username) {
         return username == null ? "" : username.toLowerCase(Locale.ROOT);
     }
