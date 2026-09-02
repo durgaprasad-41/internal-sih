@@ -22,6 +22,12 @@ public class NotificationService {
 
     @Transactional
     public Notification createNotification(Long userId, String title, String message, String type) {
+        return createNotification(userId, title, message, type, null);
+    }
+
+    @Transactional
+    public Notification createNotification(Long userId, String title, String message, String type,
+            Long relatedPaperId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found"));
 
@@ -31,6 +37,7 @@ public class NotificationService {
         notification.setMessage(message);
         notification.setType(type);
         notification.setIsRead(false);
+        notification.setRelatedPaperId(relatedPaperId);
         Notification saved = notificationRepository.save(notification);
         System.out.println("Notification created: " + saved.getTitle() + " for user: " + user.getUsername());
         return saved;

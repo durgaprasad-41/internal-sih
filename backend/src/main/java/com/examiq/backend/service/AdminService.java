@@ -1,5 +1,6 @@
 package com.examiq.backend.service;
 
+import com.examiq.backend.dto.PaperDto;
 import com.examiq.backend.entity.*;
 import com.examiq.backend.repository.*;
 import org.springframework.stereotype.Service;
@@ -15,15 +16,17 @@ public class AdminService {
     private final AdminActionRepository adminActionRepository;
     private final NotificationService notificationService;
     private final ContributorScoreService contributorScoreService;
+    private final PaperService paperService;
 
     public AdminService(PaperRepository paperRepository, UserRepository userRepository,
                       AdminActionRepository adminActionRepository, NotificationService notificationService,
-                      ContributorScoreService contributorScoreService) {
+                      ContributorScoreService contributorScoreService, PaperService paperService) {
         this.paperRepository = paperRepository;
         this.userRepository = userRepository;
         this.adminActionRepository = adminActionRepository;
         this.notificationService = notificationService;
         this.contributorScoreService = contributorScoreService;
+        this.paperService = paperService;
     }
 
     @Transactional
@@ -35,6 +38,7 @@ public class AdminService {
                 .orElseThrow(() -> new IllegalArgumentException("Admin not found"));
 
         paper.setStatus("APPROVED");
+        paper.setReviewReason(reason != null && !reason.isBlank() ? reason : "Approved by an administrator.");
         Paper savedPaper = paperRepository.save(paper);
 
         // Log admin action
@@ -63,6 +67,7 @@ public class AdminService {
                 .orElseThrow(() -> new IllegalArgumentException("Admin not found"));
 
         paper.setStatus("REJECTED");
+        paper.setReviewReason(reason);
         Paper savedPaper = paperRepository.save(paper);
 
         // Log admin action
@@ -189,16 +194,41 @@ public class AdminService {
         return savedUser;
     }
 
-    public List<Paper> getPendingPapers() {
-        return paperRepository.findByStatusOrderByCreatedAtDesc("PENDING", org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createdAt"));
+    @Transactional(readOnly = true)
+    public List<PaperDto> getPendingPapers() {
+        return paperRepository
+                .findByStatusOrderByCreatedAtDesc("PENDING",
+                        org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createdAt"))
+                .stream()
+                .map(paperService::toPaperDto)
+                .toList();
     }
 
-    public List<Paper> getFlaggedPapers() {
-        return paperRepository.findByStatusOrderByCreatedAtDesc("FLAGGED", org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createdAt"));
+    @Transactional(readOnly = true)
+    public List<PaperDto> getFlaggedPapers() {
+        return paperRepository
+                .findByStatusOrderByCreatedAtDesc("FLAGGED",
+                        org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createdAt"))
+                .stream()
+                .map(paperService::toPaperDto)
+                .toList();
     }
 
     public List<User> getAllUsers() {
         return userRepository.findAll();
+    }
+
+    public java.util.Map<String, Object> getDashboardSummary() {
+        long pendingReview = paperRepository.countByStatus("PENDING");
+        long accepted = paperRepository.countByStatus("APPROVED");
+        long rejected = paperRepository.countByStatus("REJECTED");
+        long totalPapers = paperRepository.count();
+
+        return java.util.Map.of(
+                "pendingReview", pendingReview,
+                "accepted", accepted,
+                "rejected", rejected,
+                "totalPapers", totalPapers);
     }
 
     private void logAdminAction(User admin, Paper paper, String actionType, String reason) {

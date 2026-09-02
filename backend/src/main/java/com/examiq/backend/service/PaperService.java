@@ -50,6 +50,8 @@ public class PaperService {
     private final SubjectAliasRepository subjectAliasRepository;
     private final VerificationLogRepository verificationLogRepository;
     private final UploadVerificationService uploadVerificationService;
+    private final SubjectConfidenceService subjectConfidenceService;
+    private final PdfContentExtractionService pdfContentExtractionService;
 
     @Value("${app.storage.path:./storage}")
     private String storagePath;
@@ -69,6 +71,8 @@ public class PaperService {
             SubjectAliasRepository subjectAliasRepository,
             VerificationLogRepository verificationLogRepository,
             UploadVerificationService uploadVerificationService,
+            SubjectConfidenceService subjectConfidenceService,
+            PdfContentExtractionService pdfContentExtractionService,
             RestTemplate restTemplate) {
         this.paperRepository = paperRepository;
         this.subjectRepository = subjectRepository;
@@ -80,6 +84,8 @@ public class PaperService {
         this.subjectAliasRepository = subjectAliasRepository;
         this.verificationLogRepository = verificationLogRepository;
         this.uploadVerificationService = uploadVerificationService;
+        this.subjectConfidenceService = subjectConfidenceService;
+        this.pdfContentExtractionService = pdfContentExtractionService;
         this.restTemplate = restTemplate;
     }
 
@@ -138,7 +144,8 @@ public class PaperService {
                 examType);
         if (!verificationResult.isPassed()) {
             Paper rejectedPaper = createRejectedPaperRecord(file, title, subject, university, uploader, year, examType,
-                    author, fileHashForRejectedUpload(file));
+                    author, fileHashForRejectedUpload(file), verificationResult.getScore(),
+                    verificationResult.getMessage());
             createVerificationLog(rejectedPaper, null, verificationResult.getStage(), verificationResult.getScore(),
                     verificationResult.getMessage());
             try {
@@ -155,59 +162,41 @@ public class PaperService {
             return toDto(rejectedPaper);
         }
 
-        // Check subject relevance using AI service and auto-approve if relevant
-        boolean aiApproved = false;
+        // Confidence-based subject-match check. Extraction runs on the in-memory
+        // upload bytes so a clearly-mismatched paper never needs to touch disk.
+        // The deterministic, subject-agnostic SubjectConfidenceService (driven
+        // entirely by the Subject/SubjectAlias tables, not hardcoded per subject)
+        // is the authoritative decision-maker; the external AI service is still
+        // consulted as an optional supplementary signal (recorded for
+        // transparency) but is never required for a decision to be made.
+        byte[] fileBytes;
         try {
-            String subjectCheckUrl = aiServiceUrl + "/ai/subject-check";
-            java.util.Map<String, Object> request = new java.util.HashMap<>();
-            request.put("text", title);
-            request.put("query", subject.getCanonicalName());
+            fileBytes = file.getBytes();
+        } catch (IOException e) {
+            throw new IllegalStateException("Unable to read uploaded file", e);
+        }
+        String extractedText = pdfContentExtractionService.extractText(fileBytes, file.getOriginalFilename());
+        Double externalAiMatchScore = fetchOptionalAiMatchScore(title, subject);
 
-            java.util.Map<String, Object> response = restTemplate.postForObject(subjectCheckUrl, request,
-                    java.util.Map.class);
-            if (response != null && response.containsKey("data")) {
-                java.util.Map<String, Object> data = (java.util.Map<String, Object>) response.get("data");
-                Double matchScore = data.get("match_score") instanceof Number
-                        ? ((Number) data.get("match_score")).doubleValue()
-                        : null;
-                boolean obviousMismatch = isObviousSubjectMismatch(title, subject.getCanonicalName());
-                if (obviousMismatch) {
-                    String rejectionMessage = "Paper does not appear to be relevant to the subject "
-                            + subject.getCanonicalName() + ". The uploaded content is for a different subject.";
-                    Paper rejectedPaper = createRejectedPaperRecord(file, title, subject, university, uploader, year,
-                            examType, author, fileHashForRejectedUpload(file));
-                    createVerificationLog(rejectedPaper, null, "SUBJECT_RELEVANCE_CHECK", matchScore,
-                            rejectionMessage);
-                    try {
-                        notificationService.createNotification(uploader.getId(), "Paper Not Related to Subject",
-                                rejectionMessage, "SUBJECT_REJECTED");
-                    } catch (Exception e) {
-                        System.err.println("Failed to create notification: " + e.getMessage());
-                    }
-                    return toDto(rejectedPaper);
-                }
-                if (matchScore != null && matchScore >= 0.7) {
-                    aiApproved = true;
-                } else if (matchScore != null && matchScore < 0.5) {
-                    String rejectionMessage = "Paper does not appear to be relevant to the subject "
-                            + subject.getCanonicalName() + ". Match score: " + matchScore;
-                    Paper rejectedPaper = createRejectedPaperRecord(file, title, subject, university, uploader, year,
-                            examType, author, fileHashForRejectedUpload(file));
-                    createVerificationLog(rejectedPaper, null, "SUBJECT_RELEVANCE_CHECK", matchScore,
-                            rejectionMessage);
-                    try {
-                        notificationService.createNotification(uploader.getId(), "Paper Not Related to Subject",
-                                rejectionMessage, "SUBJECT_REJECTED");
-                    } catch (Exception e) {
-                        System.err.println("Failed to create notification: " + e.getMessage());
-                    }
-                    return toDto(rejectedPaper);
-                }
+        SubjectConfidenceService.ConfidenceResult confidenceResult = subjectConfidenceService.evaluate(subject, title,
+                extractedText);
+
+        String confidenceDetails = confidenceResult.reason()
+                + (externalAiMatchScore != null ? " (external AI service score: " + externalAiMatchScore + ")" : "");
+
+        if (confidenceResult.decision() == SubjectConfidenceService.Decision.HIGH_MISMATCH) {
+            Paper rejectedPaper = createRejectedPaperRecord(file, title, subject, university, uploader, year,
+                    examType, author, fileHashForRejectedUpload(file), confidenceResult.score(),
+                    confidenceResult.reason());
+            createVerificationLog(rejectedPaper, null, "SUBJECT_CONFIDENCE_CHECK", confidenceResult.score(),
+                    confidenceDetails);
+            try {
+                notificationService.createNotification(uploader.getId(), "Paper Not Related to Subject",
+                        confidenceResult.reason(), "SUBJECT_REJECTED");
+            } catch (Exception e) {
+                System.err.println("Failed to create notification: " + e.getMessage());
             }
-        } catch (IllegalArgumentException e) {
-            throw e;
-        } catch (Exception e) {
-            System.out.println("Warning: AI subject check failed: " + e.getMessage());
+            return toDto(rejectedPaper);
         }
 
         String fileName = System.currentTimeMillis() + "_"
@@ -216,7 +205,7 @@ public class PaperService {
         try {
             Files.createDirectories(path);
             Path target = path.resolve(fileName);
-            Files.copy(file.getInputStream(), target);
+            Files.write(target, fileBytes);
 
             // Calculate SHA-256 hash of the file
             String fileHash = calculateFileHash(target);
@@ -247,6 +236,7 @@ public class PaperService {
                 paper.setStatus("REJECTED");
                 paper.setFileUrl(null);
                 paper.setFileHash(fileHash);
+                paper.setReviewReason("This exact file has already been uploaded to the system.");
                 Paper savedPaper = paperRepository.save(paper);
 
                 Upload upload = new Upload();
@@ -271,19 +261,27 @@ public class PaperService {
             paper.setYear(year);
             paper.setExamType(examType);
             paper.setAuthor(author != null ? author : uploader.getFullName());
+            paper.setAiConfidenceScore(confidenceResult.score());
 
-            // Set status based on duplicate check and AI approval
+            // Set status based on duplicate check and subject-match confidence.
             if (isDuplicate) {
                 paper.setStatus("REJECTED");
-            } else if (aiApproved) {
+                paper.setReviewReason("This paper already exists in the database for this subject, university, "
+                        + "year and exam type.");
+            } else if (confidenceResult.decision() == SubjectConfidenceService.Decision.HIGH_MATCH) {
                 paper.setStatus("APPROVED");
+                paper.setReviewReason(confidenceResult.reason());
             } else {
                 paper.setStatus("PENDING");
+                paper.setReviewReason(confidenceResult.reason());
             }
 
             paper.setFileUrl("/files/" + fileName);
             paper.setFileHash(fileHash);
             Paper savedPaper = paperRepository.save(paper);
+
+            createVerificationLog(savedPaper, null, "SUBJECT_CONFIDENCE_CHECK", confidenceResult.score(),
+                    confidenceDetails);
 
             Upload upload = new Upload();
             upload.setPaper(savedPaper);
@@ -295,6 +293,10 @@ public class PaperService {
             upload.setFileSize(file.getSize());
             upload.setUploadStatus(isDuplicate ? "REJECTED" : "COMPLETED");
             uploadRepository.save(upload);
+
+            if (!isDuplicate && confidenceResult.decision() == SubjectConfidenceService.Decision.UNCERTAIN) {
+                notifyAdminsPaperNeedsReview(savedPaper, uploader, confidenceResult);
+            }
 
             return toDto(savedPaper);
         } catch (IOException e) {
@@ -350,6 +352,10 @@ public class PaperService {
         return toDto(paper);
     }
 
+    public PaperDto toPaperDto(Paper paper) {
+        return toDto(paper);
+    }
+
     public Double getAverageRating(Paper paper) {
         double avg = ratingRepository.findByPaper(paper).stream()
                 .mapToDouble(r -> r.getScore())
@@ -360,6 +366,13 @@ public class PaperService {
 
     private Paper createRejectedPaperRecord(MultipartFile file, String title, Subject subject, University university,
             User uploader, Integer year, String examType, String author, String fileHash) {
+        return createRejectedPaperRecord(file, title, subject, university, uploader, year, examType, author,
+                fileHash, null, null);
+    }
+
+    private Paper createRejectedPaperRecord(MultipartFile file, String title, Subject subject, University university,
+            User uploader, Integer year, String examType, String author, String fileHash,
+            Double confidenceScore, String reviewReason) {
         Paper paper = new Paper();
         paper.setTitle(title);
         paper.setSubject(subject);
@@ -371,6 +384,8 @@ public class PaperService {
         paper.setStatus("REJECTED");
         paper.setFileUrl(null);
         paper.setFileHash(fileHash);
+        paper.setAiConfidenceScore(confidenceScore);
+        paper.setReviewReason(reviewReason);
         Paper savedPaper = paperRepository.save(paper);
 
         Upload upload = new Upload();
@@ -407,35 +422,56 @@ public class PaperService {
         }
     }
 
-    private boolean isObviousSubjectMismatch(String title, String selectedSubject) {
-        if (title == null || title.isBlank() || selectedSubject == null || selectedSubject.isBlank()) {
-            return false;
+    /**
+     * Best-effort call to the external AI subject-check service. Purely
+     * supplementary: its score (when available) is recorded for transparency
+     * in the verification log, but SubjectConfidenceService is always the
+     * authoritative decision-maker, so an unreachable/mocked AI service can
+     * no longer stall every upload at PENDING the way it previously did.
+     */
+    private Double fetchOptionalAiMatchScore(String title, Subject subject) {
+        try {
+            String subjectCheckUrl = aiServiceUrl + "/ai/subject-check";
+            java.util.Map<String, Object> request = new java.util.HashMap<>();
+            request.put("text", title);
+            request.put("query", subject.getCanonicalName());
+
+            java.util.Map<String, Object> response = restTemplate.postForObject(subjectCheckUrl, request,
+                    java.util.Map.class);
+            if (response != null && response.containsKey("data")) {
+                java.util.Map<String, Object> data = (java.util.Map<String, Object>) response.get("data");
+                return data.get("match_score") instanceof Number
+                        ? ((Number) data.get("match_score")).doubleValue()
+                        : null;
+            }
+        } catch (Exception e) {
+            System.out.println("Warning: AI subject check unavailable, relying on local confidence engine: "
+                    + e.getMessage());
         }
+        return null;
+    }
 
-        String normalizedTitle = normalizeSubjectKey(title);
-        String selectedKey = normalizeSubjectKey(selectedSubject);
+    /**
+     * Notifies every ADMIN user that a paper needs manual review, reusing the
+     * existing single-user Notification entity/service (one notification row
+     * per admin) rather than introducing a separate broadcast mechanism.
+     */
+    private void notifyAdminsPaperNeedsReview(Paper paper, User uploader,
+            SubjectConfidenceService.ConfidenceResult confidenceResult) {
+        String subjectName = paper.getSubject() != null ? paper.getSubject().getCanonicalName() : "Unknown subject";
+        String message = "Paper requires review: '" + paper.getTitle() + "' uploaded by " + uploader.getUsername()
+                + " for " + subjectName + ". " + confidenceResult.reason()
+                + " (confidence score: " + confidenceResult.score() + ")";
 
-        java.util.Map<String, java.util.List<String>> subjectKeywords = new java.util.HashMap<>();
-        subjectKeywords.put("database management systems", java.util.List.of(
-                "database", "dbms", "sql", "normalization", "transaction", "index", "query", "er model",
-                "entity relationship", "schema"));
-        subjectKeywords.put("operating systems", java.util.List.of(
-                "operating system", "os", "process", "thread", "scheduler", "deadlock", "memory", "kernel"));
-        subjectKeywords.put("computer networks", java.util.List.of(
-                "network", "tcp", "ip", "routing", "protocol", "socket", "osi", "switch", "routing table"));
-        subjectKeywords.put("data structures", java.util.List.of(
-                "stack", "queue", "tree", "graph", "heap", "linked list", "hash map", "algorithm"));
-
-        java.util.List<String> selectedTerms = subjectKeywords.getOrDefault(selectedKey,
-                java.util.List.of(selectedKey));
-        java.util.List<String> otherTerms = subjectKeywords.entrySet().stream()
-                .filter(entry -> !entry.getKey().equals(selectedKey))
-                .flatMap(entry -> entry.getValue().stream())
-                .toList();
-
-        boolean selectedMatch = selectedTerms.stream().anyMatch(normalizedTitle::contains);
-        boolean otherMatch = otherTerms.stream().anyMatch(normalizedTitle::contains);
-        return otherMatch && !selectedMatch;
+        List<User> admins = userRepository.findByRole_NameIgnoreCase("ADMIN");
+        for (User admin : admins) {
+            try {
+                notificationService.createNotification(admin.getId(), "Paper Awaiting Review", message,
+                        "PAPER_REVIEW_REQUIRED", paper.getId());
+            } catch (Exception e) {
+                System.err.println("Failed to notify admin " + admin.getUsername() + ": " + e.getMessage());
+            }
+        }
     }
 
     private String normalizeOptionalText(String value, String defaultValue) {
@@ -564,8 +600,12 @@ public class PaperService {
         dto.setExamType(paper.getExamType());
         dto.setAuthor(paper.getAuthor());
         dto.setStatus(paper.getStatus());
+        dto.setDisplayStatus(PaperDto.toDisplayStatus(paper.getStatus()));
         dto.setFileUrl(paper.getFileUrl());
         dto.setAverageRating(getAverageRating(paper));
+        dto.setUploaderUsername(paper.getUploader() != null ? paper.getUploader().getUsername() : null);
+        dto.setConfidenceScore(paper.getAiConfidenceScore());
+        dto.setReviewReason(paper.getReviewReason());
         return dto;
     }
 

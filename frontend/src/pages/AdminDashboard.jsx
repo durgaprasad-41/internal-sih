@@ -1,40 +1,76 @@
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
+import AdminHeader from '../components/AdminHeader';
+
+const API_BASE_URL = 'http://localhost:8080/api';
+
 export default function AdminDashboard() {
+  const navigate = useNavigate();
+  const [summary, setSummary] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const adminName = localStorage.getItem('fullName') || localStorage.getItem('username');
+
+  const loadSummary = async () => {
+    setLoading(true);
+    try {
+      const response = await axios.get(`${API_BASE_URL}/admin/dashboard`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+      setSummary(response.data.data);
+      setError('');
+    } catch (err) {
+      setError(err.response?.data?.message || 'Unable to load dashboard summary.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadSummary();
+  }, []);
+
+  const cards = [
+    { label: 'Papers awaiting review', value: summary?.pendingReview, accent: 'bg-amber-50 text-amber-700' },
+    { label: 'Accepted papers', value: summary?.accepted, accent: 'bg-green-50 text-green-700' },
+    { label: 'Rejected papers', value: summary?.rejected, accent: 'bg-red-50 text-red-700' },
+    { label: 'Total papers', value: summary?.totalPapers, accent: 'bg-blue-50 text-blue-700' }
+  ];
+
   return (
     <div className="min-h-screen bg-slate-100 p-6">
       <div className="mx-auto max-w-7xl">
-        <header className="mb-8 rounded-2xl bg-slate-900 px-6 py-4 text-white">
-          <p className="text-xs uppercase tracking-[0.25em] text-blue-300">EXAMIQ</p>
-          <h1 className="mt-2 text-3xl font-bold">Admin dashboard</h1>
-        </header>
+        <AdminHeader />
 
-        <div className="grid gap-6 md:grid-cols-4">
-          <div className="card"><p className="text-sm text-slate-500">Total users</p><p className="mt-2 text-3xl font-bold">1,248</p></div>
-          <div className="card"><p className="text-sm text-slate-500">Student</p><p className="mt-2 text-3xl font-bold">1,104</p></div>
-          <div className="card"><p className="text-sm text-slate-500">Faculty</p><p className="mt-2 text-3xl font-bold">122</p></div>
-          <div className="card"><p className="text-sm text-slate-500">Approved papers</p><p className="mt-2 text-3xl font-bold">845</p></div>
+        <div className="mb-8 rounded-2xl bg-white p-6 shadow-sm">
+          <h2 className="text-2xl font-bold text-slate-900">Welcome back, {adminName}</h2>
+          <p className="mt-1 text-slate-500">Here's what's happening with paper submissions right now.</p>
         </div>
 
-        <div className="mt-8 card">
-          <h2 className="mb-4 text-xl font-semibold">Pending approvals</h2>
-          <div className="overflow-hidden rounded-lg border border-slate-200">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-slate-50 text-slate-700">
-                <tr>
-                  <th className="px-4 py-3">Paper</th>
-                  <th className="px-4 py-3">Uploader</th>
-                  <th className="px-4 py-3">AI confidence</th>
-                  <th className="px-4 py-3">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr className="border-t border-slate-200">
-                  <td className="px-4 py-3">Operating Systems</td>
-                  <td className="px-4 py-3">ravi_92</td>
-                  <td className="px-4 py-3">87%</td>
-                  <td className="px-4 py-3"><button className="btn-primary">Review</button></td>
-                </tr>
-              </tbody>
-            </table>
+        {error && <div className="mb-6 rounded-lg bg-red-50 p-4 text-sm text-red-800">{error}</div>}
+
+        <div className="mb-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+          {cards.map((card) => (
+            <div key={card.label} className="card">
+              <p className="text-sm text-slate-500">{card.label}</p>
+              <p className={`mt-2 inline-block rounded-lg px-2 py-1 text-3xl font-bold ${card.accent}`}>
+                {loading ? '…' : summary ? card.value : '—'}
+              </p>
+            </div>
+          ))}
+        </div>
+
+        <div className="card">
+          <h3 className="mb-4 text-lg font-semibold text-slate-900">Quick actions</h3>
+          <div className="flex flex-wrap gap-3">
+            <button className="btn-primary" onClick={() => navigate('/admin/pending-approvals')}>
+              Review pending papers{summary?.pendingReview ? ` (${summary.pendingReview})` : ''}
+            </button>
+            <button className="btn-secondary" onClick={() => navigate('/admin/notifications')}>
+              View notifications
+            </button>
           </div>
         </div>
       </div>

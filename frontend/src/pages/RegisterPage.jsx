@@ -39,6 +39,7 @@ export default function RegisterPage() {
       localStorage.setItem('token', data.data.token);
       localStorage.setItem('role', data.data.role);
       localStorage.setItem('username', data.data.username);
+      localStorage.setItem('fullName', data.data.fullName || data.data.username);
 
       if (data.data.role === 'STUDENT') {
         navigate('/student');

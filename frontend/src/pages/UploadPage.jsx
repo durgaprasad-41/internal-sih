@@ -41,8 +41,15 @@ export default function UploadPage() {
       });
 
       const result = response?.data?.data;
-      if (result?.status === 'REJECTED') {
-        setMessage('Upload rejected: this paper does not match the selected subject and was not added to your uploads.');
+      if (result?.displayStatus === 'ACCEPTED') {
+        setMessage('Paper accepted! It has been automatically added to the question bank.');
+      } else if (result?.displayStatus === 'PENDING_REVIEW') {
+        setMessage(
+          'Paper uploaded. ' +
+            (result?.reviewReason || 'The system could not confidently verify the subject, so it has been sent to an administrator for review.')
+        );
+      } else if (result?.displayStatus === 'REJECTED') {
+        setMessage('Upload rejected: ' + (result?.reviewReason || 'this paper does not match the selected subject.'));
       } else {
         setMessage('Paper uploaded successfully!');
       }

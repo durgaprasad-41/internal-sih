@@ -163,12 +163,19 @@ public class StudentDashboardService {
         List<Upload> uploads = uploadRepository.findByUploadedBy(user);
         List<Map<String, Object>> result = new ArrayList<>();
         for (Upload upload : uploads) {
+            Paper paper = upload.getPaper();
             Map<String, Object> item = new HashMap<>();
             item.put("id", upload.getId());
-            item.put("paperId", upload.getPaper() != null ? upload.getPaper().getId() : null);
-            item.put("paperTitle",
-                    upload.getPaper() != null ? upload.getPaper().getTitle() : upload.getOriginalFileName());
-            item.put("status", upload.getUploadStatus());
+            item.put("paperId", paper != null ? paper.getId() : null);
+            item.put("paperTitle", paper != null ? paper.getTitle() : upload.getOriginalFileName());
+            // "status" reflects the paper's review outcome (has it been accepted into
+            // the question bank?), not the file-storage status - those are different
+            // concerns that previously got conflated here.
+            item.put("status", paper != null
+                    ? com.examiq.backend.dto.PaperDto.toDisplayStatus(paper.getStatus())
+                    : upload.getUploadStatus());
+            item.put("reason", paper != null ? paper.getReviewReason() : null);
+            item.put("confidenceScore", paper != null ? paper.getAiConfidenceScore() : null);
             item.put("fileName", upload.getOriginalFileName());
             item.put("createdAt", upload.getCreatedAt());
             result.add(item);

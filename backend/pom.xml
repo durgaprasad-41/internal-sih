@@ -92,6 +92,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- PDF text extraction for subject-match confidence scoring -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>3.0.3</version>
+        </dependency>
+
         <!-- Lets Jackson serialize JPA entities with uninitialized lazy associations
              (e.g. Rating/Bookmark returned directly by controllers) instead of
              throwing on the Hibernate proxy type. Auto-configured by Spring Boot

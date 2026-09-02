@@ -124,6 +124,15 @@ public class PaperControllerIntegrationTest {
         subject.setCanonicalName("Database Management Systems");
         subjectRepository.save(subject);
 
+        // A second, real subject row so the subject-agnostic confidence engine has
+        // something concrete to recognize as "the paper actually belongs to this
+        // other subject" - it deliberately only reasons about subjects that exist
+        // in the database, not a hardcoded list.
+        Subject otherSubject = new Subject();
+        otherSubject.setName("Operating Systems");
+        otherSubject.setCanonicalName("Operating Systems");
+        subjectRepository.save(otherSubject);
+
         User user = new User();
         user.setUsername("faculty1");
         user.setEmail("faculty1@example.com");

@@ -31,6 +31,9 @@ public class Notification {
     @Column(length = 50)
     private String type;
 
+    @Column(name = "related_paper_id")
+    private Long relatedPaperId;
+
     @Column(name = "is_read")
     private Boolean isRead = false;
 

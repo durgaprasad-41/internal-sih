@@ -1,6 +1,7 @@
 package com.examiq.backend.controller;
 
 import com.examiq.backend.dto.ApiResponse;
+import com.examiq.backend.dto.PaperDto;
 import com.examiq.backend.entity.Paper;
 import com.examiq.backend.entity.User;
 import com.examiq.backend.security.AuthenticatedUserResolver;
@@ -27,11 +28,7 @@ public class AdminController {
     @GetMapping("/admin/dashboard")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<Map<String, Object>>> dashboard() {
-        return ResponseEntity.ok(ApiResponse.success("Admin dashboard loaded", Map.of(
-                "totalUsers", 1248,
-                "students", 1104,
-                "faculty", 122,
-                "approvedPapers", 845)));
+        return ResponseEntity.ok(ApiResponse.success("Admin dashboard loaded", adminService.getDashboardSummary()));
     }
 
     @PutMapping("/admin/papers/{paperId}/approve")
@@ -66,15 +63,15 @@ public class AdminController {
 
     @GetMapping("/admin/papers/pending")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<ApiResponse<List<Paper>>> getPendingPapers() {
-        List<Paper> papers = adminService.getPendingPapers();
+    public ResponseEntity<ApiResponse<List<PaperDto>>> getPendingPapers() {
+        List<PaperDto> papers = adminService.getPendingPapers();
         return ResponseEntity.ok(ApiResponse.success("Pending papers retrieved successfully", papers));
     }
 
     @GetMapping("/admin/papers/flagged")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<ApiResponse<List<Paper>>> getFlaggedPapers() {
-        List<Paper> papers = adminService.getFlaggedPapers();
+    public ResponseEntity<ApiResponse<List<PaperDto>>> getFlaggedPapers() {
+        List<PaperDto> papers = adminService.getFlaggedPapers();
         return ResponseEntity.ok(ApiResponse.success("Flagged papers retrieved successfully", papers));
     }
 

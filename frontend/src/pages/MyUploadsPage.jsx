@@ -31,6 +31,20 @@ export default function MyUploadsPage() {
   if (loading) return <div className="min-h-screen p-8 text-center">Loading uploads...</div>;
   if (error) return <div className="min-h-screen p-8 text-center text-red-600">{error}</div>;
 
+  const statusBadgeClass = (status) => {
+    switch (status) {
+      case 'ACCEPTED':
+        return 'bg-green-100 text-green-800';
+      case 'REJECTED':
+        return 'bg-red-100 text-red-800';
+      case 'PENDING_REVIEW':
+      case 'PROCESSING':
+        return 'bg-amber-100 text-amber-800';
+      default:
+        return 'bg-slate-100 text-slate-700';
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-100 p-6">
       <div className="mx-auto max-w-5xl card">
@@ -44,14 +58,23 @@ export default function MyUploadsPage() {
         ) : (
           <div className="space-y-4">
             {uploads.map((upload) => (
-              <div key={upload.id} className="rounded-xl border p-4 flex items-center justify-between">
-                <div>
-                  <h3 className="font-semibold text-slate-900">{upload.paperTitle}</h3>
-                  <p className="text-sm text-slate-500">{upload.fileName}</p>
-                  <p className="text-sm text-slate-500">Status: {upload.status}</p>
+              <div key={upload.id} className="rounded-xl border p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold text-slate-900">{upload.paperTitle}</h3>
+                    <p className="text-sm text-slate-500">{upload.fileName}</p>
+                    <span
+                      className={`mt-2 inline-block rounded-full px-3 py-1 text-xs font-semibold ${statusBadgeClass(upload.status)}`}
+                    >
+                      {upload.status}
+                    </span>
+                  </div>
+                  {upload.paperId && upload.status !== 'REJECTED' && (
+                    <button className="btn-primary" onClick={() => navigate(`/paper/${upload.paperId}`)}>View</button>
+                  )}
                 </div>
-                {upload.paperId && (
-                  <button className="btn-primary" onClick={() => navigate(`/paper/${upload.paperId}`)}>View</button>
+                {upload.reason && (
+                  <p className="mt-3 text-sm text-slate-600">{upload.reason}</p>
                 )}
               </div>
             ))}

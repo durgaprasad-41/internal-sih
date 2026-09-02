@@ -24,4 +24,6 @@ public interface PaperRepository extends JpaRepository<Paper, Long> {
     Optional<Paper> findByFileHash(String fileHash);
 
     boolean existsByFileHash(String fileHash);
+
+    long countByStatus(String status);
 }

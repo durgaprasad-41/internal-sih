@@ -69,6 +69,9 @@ public class Paper {
     @Column(name = "metadata_json")
     private String metadataJson;
 
+    @Column(name = "review_reason", columnDefinition = "TEXT")
+    private String reviewReason;
+
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
 
