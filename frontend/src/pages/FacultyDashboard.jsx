@@ -65,6 +65,7 @@ export default function FacultyDashboard() {
           <h3 className="mb-4 text-lg font-semibold text-slate-900">Quick actions</h3>
           <div className="flex flex-wrap gap-3">
             <button className="btn-primary" onClick={() => navigate('/upload')}>Upload a paper</button>
+            <button className="btn-secondary" onClick={() => navigate('/faculty/uploads')}>My uploads</button>
             <button className="btn-secondary" onClick={() => navigate('/search')}>Search papers</button>
             <button className="btn-primary" onClick={() => navigate('/faculty/question-papers/generate')}>
               Generate question paper

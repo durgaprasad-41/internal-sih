@@ -3,6 +3,8 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 const NAV_LINKS = [
   { to: '/faculty', label: 'Dashboard' },
   { to: '/upload', label: 'Upload' },
+  { to: '/faculty/uploads', label: 'My Uploads' },
+  { to: '/faculty/reviews', label: 'Papers to Review' },
   { to: '/search', label: 'Search' },
   { to: '/faculty/question-papers/generate', label: 'Generate Question Paper' },
   { to: '/faculty/question-papers', label: 'My Generated Papers' }

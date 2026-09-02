@@ -1,5 +1,6 @@
 package com.examiq.backend.service;
 
+import com.examiq.backend.dto.PaperDto;
 import com.examiq.backend.entity.*;
 import com.examiq.backend.repository.*;
 import org.springframework.stereotype.Service;
@@ -19,12 +20,13 @@ public class FacultyService {
         private final QuestionRepository questionRepository;
         private final RatingRepository ratingRepository;
         private final NotificationService notificationService;
+        private final PaperService paperService;
 
         public FacultyService(PaperRepository paperRepository, UserRepository userRepository,
                         UniversityRepository universityRepository,
                         FacultyVerificationRepository facultyVerificationRepository,
                         QuestionRepository questionRepository, RatingRepository ratingRepository,
-                        NotificationService notificationService) {
+                        NotificationService notificationService, PaperService paperService) {
                 this.paperRepository = paperRepository;
                 this.userRepository = userRepository;
                 this.universityRepository = universityRepository;
@@ -32,6 +34,7 @@ public class FacultyService {
                 this.questionRepository = questionRepository;
                 this.ratingRepository = ratingRepository;
                 this.notificationService = notificationService;
+                this.paperService = paperService;
         }
 
         @Transactional
@@ -116,10 +119,18 @@ public class FacultyService {
                                 "totalQuestions", questions.size());
         }
 
-        public List<Paper> getFacultyUploads(Long facultyId) {
+        /**
+         * Same source query as getDashboardSummary's "papersUploaded" count
+         * (paperRepository.findByUploaderOrderByCreatedAtDesc) so the dashboard
+         * total and this list can never disagree, and reuses PaperService's
+         * shared entity->DTO mapping rather than re-deriving it here.
+         */
+        public List<PaperDto> getFacultyUploads(Long facultyId) {
                 User faculty = userRepository.findById(facultyId)
                                 .orElseThrow(() -> new IllegalArgumentException("Faculty not found"));
-                return paperRepository.findByUploaderOrderByCreatedAtDesc(faculty);
+                return paperRepository.findByUploaderOrderByCreatedAtDesc(faculty).stream()
+                                .map(paperService::toPaperDto)
+                                .toList();
         }
 
         public List<FacultyVerification> getPendingVerifications() {

@@ -1,10 +1,14 @@
 package com.examiq.backend.controller;
 
 import com.examiq.backend.dto.ApiResponse;
+import com.examiq.backend.dto.PaperDto;
+import com.examiq.backend.dto.PaperReviewAssignmentDto;
+import com.examiq.backend.dto.SubmitReviewRequest;
 import com.examiq.backend.entity.FacultyVerification;
-import com.examiq.backend.entity.Paper;
 import com.examiq.backend.security.AuthenticatedUserResolver;
 import com.examiq.backend.service.FacultyService;
+import com.examiq.backend.service.PaperReviewService;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -18,10 +22,13 @@ public class FacultyController {
 
     private final FacultyService facultyService;
     private final AuthenticatedUserResolver authenticatedUserResolver;
+    private final PaperReviewService paperReviewService;
 
-    public FacultyController(FacultyService facultyService, AuthenticatedUserResolver authenticatedUserResolver) {
+    public FacultyController(FacultyService facultyService, AuthenticatedUserResolver authenticatedUserResolver,
+            PaperReviewService paperReviewService) {
         this.facultyService = facultyService;
         this.authenticatedUserResolver = authenticatedUserResolver;
+        this.paperReviewService = paperReviewService;
     }
 
     @GetMapping("/faculty/dashboard")
@@ -52,10 +59,29 @@ public class FacultyController {
 
     @GetMapping("/faculty/uploads")
     @PreAuthorize("hasRole('FACULTY')")
-    public ResponseEntity<ApiResponse<List<Paper>>> getFacultyUploads() {
+    public ResponseEntity<ApiResponse<List<PaperDto>>> getFacultyUploads() {
         Long facultyId = authenticatedUserResolver.getCurrentUser().getId();
-        List<Paper> papers = facultyService.getFacultyUploads(facultyId);
+        List<PaperDto> papers = facultyService.getFacultyUploads(facultyId);
         return ResponseEntity.ok(ApiResponse.success("Faculty uploads retrieved successfully", papers));
+    }
+
+    @GetMapping("/faculty/reviews")
+    @PreAuthorize("hasRole('FACULTY')")
+    public ResponseEntity<ApiResponse<List<PaperReviewAssignmentDto>>> getMyReviewAssignments() {
+        Long facultyId = authenticatedUserResolver.getCurrentUser().getId();
+        return ResponseEntity.ok(ApiResponse.success("Review assignments retrieved successfully",
+                paperReviewService.getAssignmentsForFaculty(facultyId)));
+    }
+
+    @PutMapping("/faculty/reviews/{assignmentId}")
+    @PreAuthorize("hasRole('FACULTY')")
+    public ResponseEntity<ApiResponse<PaperReviewAssignmentDto>> submitReview(
+            @PathVariable Long assignmentId,
+            @Valid @RequestBody SubmitReviewRequest request) {
+        Long facultyId = authenticatedUserResolver.getCurrentUser().getId();
+        return ResponseEntity.ok(ApiResponse.success("Review submitted successfully",
+                paperReviewService.submitReviewByAssignment(assignmentId, facultyId, request.getDecision(),
+                        request.getComment())));
     }
 
     @GetMapping("/admin/faculty-verification/pending")

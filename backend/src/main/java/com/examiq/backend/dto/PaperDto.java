@@ -18,6 +18,8 @@ public class PaperDto {
     private String uploaderUsername;
     private Double confidenceScore;
     private String reviewReason;
+    private String fileName;
+    private java.time.LocalDateTime createdAt;
 
     /**
      * Maps the internal, backward-compatible status literals stored on Paper
@@ -31,6 +33,7 @@ public class PaperDto {
         return switch (rawStatus.toUpperCase()) {
             case "APPROVED" -> "ACCEPTED";
             case "PENDING" -> "PENDING_REVIEW";
+            case "UNDER_REVIEW" -> "UNDER_FACULTY_REVIEW";
             case "FLAGGED", "FLAGSED" -> "PROCESSING";
             case "REJECTED" -> "REJECTED";
             default -> rawStatus;

@@ -48,6 +48,7 @@ public class PaperService {
     private final RatingRepository ratingRepository;
     private final NotificationService notificationService;
     private final SubjectAliasRepository subjectAliasRepository;
+    private final com.examiq.backend.repository.TopicMappingRepository topicMappingRepository;
     private final VerificationLogRepository verificationLogRepository;
     private final UploadVerificationService uploadVerificationService;
     private final SubjectConfidenceService subjectConfidenceService;
@@ -69,6 +70,7 @@ public class PaperService {
             RatingRepository ratingRepository,
             NotificationService notificationService,
             SubjectAliasRepository subjectAliasRepository,
+            com.examiq.backend.repository.TopicMappingRepository topicMappingRepository,
             VerificationLogRepository verificationLogRepository,
             UploadVerificationService uploadVerificationService,
             SubjectConfidenceService subjectConfidenceService,
@@ -82,6 +84,7 @@ public class PaperService {
         this.ratingRepository = ratingRepository;
         this.notificationService = notificationService;
         this.subjectAliasRepository = subjectAliasRepository;
+        this.topicMappingRepository = topicMappingRepository;
         this.verificationLogRepository = verificationLogRepository;
         this.uploadVerificationService = uploadVerificationService;
         this.subjectConfidenceService = subjectConfidenceService;
@@ -263,14 +266,16 @@ public class PaperService {
             paper.setAuthor(author != null ? author : uploader.getFullName());
             paper.setAiConfidenceScore(confidenceResult.score());
 
-            // Set status based on duplicate check and subject-match confidence.
+            // Every non-duplicate upload now lands with an admin first - no
+            // status here auto-publishes a paper. A high subject-match
+            // confidence is still recorded and shown to the admin (and,
+            // wherever the paper is later forwarded, to faculty reviewers),
+            // but only an admin's explicit approve/reject call (optionally
+            // informed by faculty peer review) ever sets APPROVED/REJECTED.
             if (isDuplicate) {
                 paper.setStatus("REJECTED");
                 paper.setReviewReason("This paper already exists in the database for this subject, university, "
                         + "year and exam type.");
-            } else if (confidenceResult.decision() == SubjectConfidenceService.Decision.HIGH_MATCH) {
-                paper.setStatus("APPROVED");
-                paper.setReviewReason(confidenceResult.reason());
             } else {
                 paper.setStatus("PENDING");
                 paper.setReviewReason(confidenceResult.reason());
@@ -294,7 +299,7 @@ public class PaperService {
             upload.setUploadStatus(isDuplicate ? "REJECTED" : "COMPLETED");
             uploadRepository.save(upload);
 
-            if (!isDuplicate && confidenceResult.decision() == SubjectConfidenceService.Decision.UNCERTAIN) {
+            if (!isDuplicate) {
                 notifyAdminsPaperNeedsReview(savedPaper, uploader, confidenceResult);
             }
 
@@ -304,6 +309,36 @@ public class PaperService {
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("Unable to calculate file hash", e);
         }
+    }
+
+    /**
+     * Resolves a subject the user typed - by exact name/canonical name, by a
+     * configured SubjectAlias, or by acronym (e.g. "LAFA" for "Linear
+     * Algebra And Function Approximation") - to its canonical Subject.
+     * Shared by any feature that needs "which subject did they mean" rather
+     * than free-text search, e.g. Smart Revision, so that typing an
+     * abbreviation there works exactly like it already does in paper search.
+     */
+    public Optional<Subject> resolveSubjectByNameAliasOrAcronym(String query) {
+        if (query == null || query.isBlank()) {
+            return Optional.empty();
+        }
+        String trimmed = query.trim();
+        Optional<Subject> exact = subjectRepository.findByNameIgnoreCase(trimmed)
+                .or(() -> subjectRepository.findByCanonicalNameIgnoreCase(trimmed));
+        if (exact.isPresent()) {
+            return exact;
+        }
+        String normalizedQuery = normalizeForSearch(trimmed);
+        for (Subject subject : subjectRepository.findAll()) {
+            boolean aliasMatch = subjectAliasRepository.findBySubject(subject).stream()
+                    .anyMatch(alias -> normalizeForSearch(alias.getAlias()).equals(normalizedQuery));
+            if (aliasMatch || matchesAcronym(subject.getCanonicalName(), normalizedQuery)
+                    || matchesAcronym(subject.getName(), normalizedQuery)) {
+                return Optional.of(subject);
+            }
+        }
+        return Optional.empty();
     }
 
     public List<PaperDto> searchPapers(String query) {
@@ -319,7 +354,7 @@ public class PaperService {
                     .collect(Collectors.toList());
         }
 
-        String needle = q.toLowerCase();
+        String needle = normalizeForSearch(q);
         return papers.stream()
                 .filter(paper -> "APPROVED".equalsIgnoreCase(paper.getStatus()))
                 .filter(paper -> paper.getFileUrl() != null && !paper.getFileUrl().isBlank())
@@ -565,29 +600,93 @@ public class PaperService {
     }
 
     private boolean matchesSearch(Paper paper, String query) {
-        String title = paper.getTitle() == null ? "" : paper.getTitle().toLowerCase();
-        String subject = paper.getSubject() != null && paper.getSubject().getCanonicalName() != null
-                ? paper.getSubject().getCanonicalName().toLowerCase()
+        String title = normalizeForSearch(paper.getTitle());
+        String subjectName = paper.getSubject() != null ? paper.getSubject().getCanonicalName() : null;
+        String subject = normalizeForSearch(subjectName);
+        String university = paper.getUniversity() != null
+                ? normalizeForSearch(paper.getUniversity().getName())
                 : "";
-        String university = paper.getUniversity() != null && paper.getUniversity().getName() != null
-                ? paper.getUniversity().getName().toLowerCase()
-                : "";
-        String examType = paper.getExamType() == null ? "" : paper.getExamType().toLowerCase();
-        String author = paper.getAuthor() == null ? "" : paper.getAuthor().toLowerCase();
+        String examType = normalizeForSearch(paper.getExamType());
+        String author = normalizeForSearch(paper.getAuthor());
+        String ocrText = normalizeForSearch(paper.getOcrText());
+        String uploaderName = "";
+        if (paper.getUploader() != null) {
+            String username = paper.getUploader().getUsername();
+            String fullName = paper.getUploader().getFullName();
+            uploaderName = normalizeForSearch((username != null ? username : "") + " " + (fullName != null ? fullName : ""));
+        }
 
-        // Check if query matches any subject alias
+        // Check if query matches any subject alias (e.g. an admin-configured
+        // short form like "DBMS" for "Database Management Systems").
         boolean matchesSubjectAlias = false;
         if (paper.getSubject() != null) {
             matchesSubjectAlias = subjectAliasRepository.findBySubject(paper.getSubject()).stream()
-                    .anyMatch(alias -> alias.getAlias().toLowerCase().contains(query));
+                    .anyMatch(alias -> normalizeForSearch(alias.getAlias()).contains(query));
         }
+
+        // Check topic names extracted from this paper's questions (e.g.
+        // "Thermodynamics" for a topic-tagged question), where available.
+        boolean matchesTopic = topicMappingRepository.findByQuestion_Paper(paper).stream()
+                .anyMatch(tm -> tm.getTopicName() != null && normalizeForSearch(tm.getTopicName()).contains(query));
+
+        // Acronym match so a short form like "ec" finds "Engineering
+        // Chemistry" even with no admin-configured alias - only meaningful
+        // for multi-word names, so a single-word subject never matches an
+        // unrelated 1-2 letter query.
+        boolean matchesAcronym = matchesAcronym(subjectName, query) || matchesAcronym(paper.getTitle(), query);
 
         return title.contains(query)
                 || subject.contains(query)
                 || university.contains(query)
                 || examType.contains(query)
                 || author.contains(query)
-                || matchesSubjectAlias;
+                || uploaderName.contains(query)
+                || ocrText.contains(query)
+                || matchesSubjectAlias
+                || matchesTopic
+                || matchesAcronym;
+    }
+
+    /**
+     * Case-insensitive search-time normalization only - never applied to
+     * stored/displayed data. Treats "&" as "and" so "Linear Algebra &
+     * Function Approximation" and "...And Function Approximation" are
+     * searchable as the same phrase, and collapses whitespace so extra
+     * spacing doesn't break a match.
+     */
+    private String normalizeForSearch(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.toLowerCase()
+                .replace("&", " and ")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
+
+    /**
+     * Filler words skipped when building an acronym, so "Linear Algebra And
+     * Function Approximation" yields "LAFA" rather than "LAAFA" - matching
+     * how people actually abbreviate course names ("&" is normalized to
+     * "and" beforehand by the caller, so it's covered by the same list).
+     */
+    private static final java.util.Set<String> ACRONYM_STOP_WORDS = java.util.Set.of(
+            "and", "of", "the", "for", "in", "on", "to", "a", "an");
+
+    private boolean matchesAcronym(String text, String query) {
+        if (text == null || query.isBlank()) {
+            return false;
+        }
+        String normalizedText = normalizeForSearch(text).replaceAll("[^a-z0-9\\s]", " ");
+        String[] words = normalizedText.trim().split("\\s+");
+        String acronym = java.util.Arrays.stream(words)
+                .filter(w -> !w.isEmpty() && !ACRONYM_STOP_WORDS.contains(w))
+                .map(w -> w.substring(0, 1))
+                .collect(Collectors.joining());
+        if (acronym.length() < 2) {
+            return false;
+        }
+        return acronym.equals(query);
     }
 
     private PaperDto toDto(Paper paper) {
@@ -606,7 +705,20 @@ public class PaperService {
         dto.setUploaderUsername(paper.getUploader() != null ? paper.getUploader().getUsername() : null);
         dto.setConfidenceScore(paper.getAiConfidenceScore());
         dto.setReviewReason(paper.getReviewReason());
+        dto.setCreatedAt(paper.getCreatedAt());
+        dto.setFileName(uploadRepository.findByPaper(paper)
+                .map(Upload::getOriginalFileName)
+                .orElseGet(() -> fileNameFromUrl(paper.getFileUrl())));
         return dto;
+    }
+
+    /** Last-resort fallback when a paper has no matching Upload row: strips the stored-file's timestamp prefix off the URL's basename. */
+    private String fileNameFromUrl(String fileUrl) {
+        if (fileUrl == null || fileUrl.isBlank()) {
+            return null;
+        }
+        String basename = fileUrl.substring(fileUrl.lastIndexOf('/') + 1);
+        return basename.replaceFirst("^\\d+_", "");
     }
 
     private String calculateFileHash(Path filePath) throws IOException, NoSuchAlgorithmException {

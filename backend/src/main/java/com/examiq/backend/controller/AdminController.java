@@ -1,11 +1,15 @@
 package com.examiq.backend.controller;
 
 import com.examiq.backend.dto.ApiResponse;
+import com.examiq.backend.dto.AssignReviewersRequest;
 import com.examiq.backend.dto.PaperDto;
+import com.examiq.backend.dto.PaperReviewSummaryDto;
 import com.examiq.backend.entity.Paper;
 import com.examiq.backend.entity.User;
 import com.examiq.backend.security.AuthenticatedUserResolver;
 import com.examiq.backend.service.AdminService;
+import com.examiq.backend.service.PaperReviewService;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -19,10 +23,13 @@ public class AdminController {
 
     private final AdminService adminService;
     private final AuthenticatedUserResolver authenticatedUserResolver;
+    private final PaperReviewService paperReviewService;
 
-    public AdminController(AdminService adminService, AuthenticatedUserResolver authenticatedUserResolver) {
+    public AdminController(AdminService adminService, AuthenticatedUserResolver authenticatedUserResolver,
+            PaperReviewService paperReviewService) {
         this.adminService = adminService;
         this.authenticatedUserResolver = authenticatedUserResolver;
+        this.paperReviewService = paperReviewService;
     }
 
     @GetMapping("/admin/dashboard")
@@ -66,6 +73,30 @@ public class AdminController {
     public ResponseEntity<ApiResponse<List<PaperDto>>> getPendingPapers() {
         List<PaperDto> papers = adminService.getPendingPapers();
         return ResponseEntity.ok(ApiResponse.success("Pending papers retrieved successfully", papers));
+    }
+
+    @PostMapping("/admin/papers/{paperId}/assign-reviewers")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<PaperReviewSummaryDto>> assignReviewers(
+            @PathVariable Long paperId,
+            @Valid @RequestBody AssignReviewersRequest request) {
+        Long adminId = authenticatedUserResolver.getCurrentUser().getId();
+        PaperReviewSummaryDto summary = paperReviewService.assignReviewers(paperId, adminId, request.getReviewerIds());
+        return ResponseEntity.ok(ApiResponse.success("Paper forwarded to faculty reviewers", summary));
+    }
+
+    @GetMapping("/admin/papers/under-review")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<List<PaperReviewSummaryDto>>> getUnderReviewPapers() {
+        return ResponseEntity.ok(ApiResponse.success("Papers under faculty review retrieved successfully",
+                paperReviewService.getUnderReviewPapers()));
+    }
+
+    @GetMapping("/admin/papers/{paperId}/review-summary")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<PaperReviewSummaryDto>> getReviewSummary(@PathVariable Long paperId) {
+        return ResponseEntity.ok(ApiResponse.success("Review summary retrieved successfully",
+                paperReviewService.getReviewSummary(paperId)));
     }
 
     @GetMapping("/admin/papers/flagged")

@@ -95,8 +95,8 @@ public class SubjectConfidenceService {
         if (competitorStrong && !selectedStrong) {
             double score = Math.min(0.95, 0.7 + (bestCompetitorPhraseHit ? 0.15 : 0) + Math.min(0.08, bestCompetitorHits * 0.02));
             return new ConfidenceResult(Decision.HIGH_MISMATCH, score,
-                    "This paper appears to be related to " + displayName(bestCompetitor)
-                            + " rather than " + displayName(selectedSubject) + ".");
+                    "Your paper is not relevant to the selected subject '" + displayName(selectedSubject)
+                            + "'. Its content appears to be related to " + displayName(bestCompetitor) + " instead.");
         }
 
         double score = (selectedWordHits > 0 || selectedPhraseHit) ? 0.55 : 0.4;

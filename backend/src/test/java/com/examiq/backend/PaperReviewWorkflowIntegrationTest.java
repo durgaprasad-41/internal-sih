@@ -9,6 +9,7 @@ import com.examiq.backend.repository.AdminActionRepository;
 import com.examiq.backend.repository.ContributorScoreRepository;
 import com.examiq.backend.repository.NotificationRepository;
 import com.examiq.backend.repository.PaperRepository;
+import com.examiq.backend.repository.PaperReviewAssignmentRepository;
 import com.examiq.backend.repository.RoleRepository;
 import com.examiq.backend.repository.SubjectRepository;
 import com.examiq.backend.repository.UniversityRepository;
@@ -86,8 +87,16 @@ public class PaperReviewWorkflowIntegrationTest {
     @Autowired
     private ContributorScoreRepository contributorScoreRepository;
 
+    @Autowired
+    private PaperReviewAssignmentRepository paperReviewAssignmentRepository;
+
     @BeforeEach
     void setUp() {
+        // paper_review_assignments FKs to papers, so it must be cleared
+        // before papers are; other test classes in this shared H2 context
+        // also rely on the STUDENT/FACULTY/ADMIN roles persisting, so never
+        // delete roles here - only find-or-create the ones this test needs.
+        paperReviewAssignmentRepository.deleteAll();
         adminActionRepository.deleteAll();
         contributorScoreRepository.deleteAll();
         verificationLogRepository.deleteAll();
@@ -97,15 +106,18 @@ public class PaperReviewWorkflowIntegrationTest {
         userRepository.deleteAll();
         universityRepository.deleteAll();
         subjectRepository.deleteAll();
-        roleRepository.deleteAll();
 
-        Role studentRole = new Role();
-        studentRole.setName("STUDENT");
-        roleRepository.save(studentRole);
+        Role studentRole = roleRepository.findByName("STUDENT").orElseGet(() -> {
+            Role r = new Role();
+            r.setName("STUDENT");
+            return roleRepository.save(r);
+        });
 
-        Role adminRole = new Role();
-        adminRole.setName("ADMIN");
-        roleRepository.save(adminRole);
+        Role adminRole = roleRepository.findByName("ADMIN").orElseGet(() -> {
+            Role r = new Role();
+            r.setName("ADMIN");
+            return roleRepository.save(r);
+        });
 
         University university = new University();
         university.setName("NIT Trichy");
@@ -146,7 +158,12 @@ public class PaperReviewWorkflowIntegrationTest {
 
     @Test
     @WithMockUser(username = "student1", roles = "STUDENT")
-    void clearlyCorrectPaper_isAutomaticallyAccepted() throws Exception {
+    void clearlyCorrectPaper_stillGoesToAdminAsPending_withHighConfidenceReason() throws Exception {
+        // Every paper now reaches an admin first, regardless of how confident
+        // the subject-match is - only an explicit admin decision (optionally
+        // informed by faculty review) can ever set APPROVED, so even a clear
+        // match lands as PENDING with a confidence-backed reason and notifies
+        // every admin, rather than auto-publishing.
         mockMvc.perform(multipart("/api/papers/upload")
                 .file(pdfFile())
                 .param("title", "Engineering Chemistry Question Paper Final Exam")
@@ -156,7 +173,13 @@ public class PaperReviewWorkflowIntegrationTest {
                 .param("examType", "Final")
                 .with(csrf()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.status").value("APPROVED"));
+                .andExpect(jsonPath("$.data.status").value("PENDING"))
+                .andExpect(jsonPath("$.data.reviewReason").value(
+                        org.hamcrest.Matchers.containsString("matches the selected subject")));
+
+        User admin = userRepository.findByUsername("admin1").orElseThrow();
+        List<Notification> adminNotifications = notificationRepository.findByUserOrderByCreatedAtDesc(admin);
+        assertThat(adminNotifications).anyMatch(n -> "PAPER_REVIEW_REQUIRED".equals(n.getType()));
     }
 
     @Test

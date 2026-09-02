@@ -33,12 +33,14 @@ export default function UploadPage() {
     });
 
     try {
+      console.log('[UploadPage] POST /papers/upload', { title: formData.title, subject: formData.subject });
       const response = await axios.post(`${API_BASE_URL}/papers/upload`, data, {
         headers: {
           'Content-Type': 'multipart/form-data',
           Authorization: `Bearer ${localStorage.getItem('token')}`
         }
       });
+      console.log('[UploadPage] upload response', response.data);
 
       const result = response?.data?.data;
       if (result?.displayStatus === 'ACCEPTED') {
@@ -49,7 +51,7 @@ export default function UploadPage() {
             (result?.reviewReason || 'The system could not confidently verify the subject, so it has been sent to an administrator for review.')
         );
       } else if (result?.displayStatus === 'REJECTED') {
-        setMessage('Upload rejected: ' + (result?.reviewReason || 'this paper does not match the selected subject.'));
+        setMessage('Upload rejected: ' + (result?.reviewReason || 'Your paper is not relevant to the selected subject.'));
       } else {
         setMessage('Paper uploaded successfully!');
       }
@@ -57,7 +59,18 @@ export default function UploadPage() {
       setFormData({ title: '', subject: '', university: '', year: '', examType: '', author: '' });
       setFile(null);
     } catch (error) {
-      setMessage('Upload failed: ' + (error.response?.data?.message || error.message));
+      console.error('[UploadPage] upload request failed', error);
+      if (error.response) {
+        // The server actually responded (validation/rejection/server error) -
+        // show its message, never a generic "network error" for this case.
+        setMessage('Upload failed: ' + (error.response.data?.message || `Server returned ${error.response.status}.`));
+      } else if (error.request) {
+        // The request was sent but no response came back at all - this is
+        // the only case that's genuinely a network/connectivity problem.
+        setMessage('Upload failed: could not reach the server. Check your connection and that the backend is running, then try again.');
+      } else {
+        setMessage('Upload failed: ' + error.message);
+      }
     }
     setUploading(false);
   };

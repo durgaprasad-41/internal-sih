@@ -7,6 +7,7 @@ const API_BASE_URL = 'http://localhost:8080/api';
 const NAV_LINKS = [
   { to: '/admin/dashboard', label: 'Dashboard' },
   { to: '/admin/pending-approvals', label: 'Pending Approvals' },
+  { to: '/admin/under-review', label: 'Under Review' },
   { to: '/admin/notifications', label: 'Notifications' }
 ];
 

@@ -5,7 +5,9 @@ import StudentDashboard from './pages/StudentDashboard';
 import FacultyDashboard from './pages/FacultyDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminPendingApprovalsPage from './pages/AdminPendingApprovalsPage';
+import AdminUnderReviewPage from './pages/AdminUnderReviewPage';
 import AdminNotificationsPage from './pages/AdminNotificationsPage';
+import FacultyReviewsPage from './pages/FacultyReviewsPage';
 import SearchPage from './pages/SearchPage';
 import UploadPage from './pages/UploadPage';
 import PaperDetailPage from './pages/PaperDetailPage';
@@ -37,6 +39,22 @@ function App() {
         element={
           <RequireFaculty>
             <FacultyDashboard />
+          </RequireFaculty>
+        }
+      />
+      <Route
+        path="/faculty/uploads"
+        element={
+          <RequireFaculty>
+            <MyUploadsPage />
+          </RequireFaculty>
+        }
+      />
+      <Route
+        path="/faculty/reviews"
+        element={
+          <RequireFaculty>
+            <FacultyReviewsPage />
           </RequireFaculty>
         }
       />
@@ -85,6 +103,14 @@ function App() {
         element={
           <RequireAdmin>
             <AdminPendingApprovalsPage />
+          </RequireAdmin>
+        }
+      />
+      <Route
+        path="/admin/under-review"
+        element={
+          <RequireAdmin>
+            <AdminUnderReviewPage />
           </RequireAdmin>
         }
       />
