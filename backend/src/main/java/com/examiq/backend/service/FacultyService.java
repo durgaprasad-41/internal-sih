@@ -125,4 +125,23 @@ public class FacultyService {
         public List<FacultyVerification> getPendingVerifications() {
                 return facultyVerificationRepository.findByVerificationStatus("PENDING");
         }
+
+        public Map<String, Object> getDashboardSummary(Long facultyId) {
+                User faculty = userRepository.findById(facultyId)
+                                .orElseThrow(() -> new IllegalArgumentException("Faculty not found"));
+
+                List<Paper> uploads = paperRepository.findByUploaderOrderByCreatedAtDesc(faculty);
+                long approvedUploads = uploads.stream().filter(p -> "APPROVED".equalsIgnoreCase(p.getStatus())).count();
+                long pendingUploads = uploads.stream().filter(p -> "PENDING".equalsIgnoreCase(p.getStatus())).count();
+
+                String verificationStatus = facultyVerificationRepository.findByFaculty(faculty)
+                                .map(FacultyVerification::getVerificationStatus)
+                                .orElse("NOT_SUBMITTED");
+
+                return Map.of(
+                                "papersUploaded", uploads.size(),
+                                "approvedUploads", approvedUploads,
+                                "pendingUploads", pendingUploads,
+                                "verification", verificationStatus);
+        }
 }
