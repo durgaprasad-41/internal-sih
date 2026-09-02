@@ -2,6 +2,7 @@ package com.examiq.backend.controller;
 
 import com.examiq.backend.dto.ApiResponse;
 import com.examiq.backend.entity.Rating;
+import com.examiq.backend.security.AuthenticatedUserResolver;
 import com.examiq.backend.service.RatingService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -15,9 +16,11 @@ import java.util.List;
 public class RatingController {
 
     private final RatingService ratingService;
+    private final AuthenticatedUserResolver authenticatedUserResolver;
 
-    public RatingController(RatingService ratingService) {
+    public RatingController(RatingService ratingService, AuthenticatedUserResolver authenticatedUserResolver) {
         this.ratingService = ratingService;
+        this.authenticatedUserResolver = authenticatedUserResolver;
     }
 
     @PostMapping("/papers/{paperId}/rate")
@@ -27,10 +30,8 @@ public class RatingController {
             @RequestParam Integer score,
             @RequestParam(required = false) String comment,
             Authentication authentication) {
-        String username = authentication.getName();
-        // For simplicity, assuming user ID can be derived from username
-        // In production, you'd fetch the user from the repository
-        Rating rating = ratingService.ratePaper(paperId, 1L, score, comment);
+        Long userId = authenticatedUserResolver.getCurrentUser(authentication).getId();
+        Rating rating = ratingService.ratePaper(paperId, userId, score, comment);
         return ResponseEntity.ok(ApiResponse.success("Rating submitted successfully", rating));
     }
 

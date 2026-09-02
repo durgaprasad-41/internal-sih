@@ -3,6 +3,7 @@ package com.examiq.backend.controller;
 import com.examiq.backend.dto.ApiResponse;
 import com.examiq.backend.entity.Paper;
 import com.examiq.backend.entity.User;
+import com.examiq.backend.security.AuthenticatedUserResolver;
 import com.examiq.backend.service.AdminService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -16,9 +17,11 @@ import java.util.Map;
 public class AdminController {
 
     private final AdminService adminService;
+    private final AuthenticatedUserResolver authenticatedUserResolver;
 
-    public AdminController(AdminService adminService) {
+    public AdminController(AdminService adminService, AuthenticatedUserResolver authenticatedUserResolver) {
         this.adminService = adminService;
+        this.authenticatedUserResolver = authenticatedUserResolver;
     }
 
     @GetMapping("/admin/dashboard")
@@ -36,7 +39,8 @@ public class AdminController {
     public ResponseEntity<ApiResponse<Paper>> approvePaper(
             @PathVariable Long paperId,
             @RequestParam(required = false) String reason) {
-        Paper paper = adminService.approvePaper(paperId, 1L, reason);
+        Long adminId = authenticatedUserResolver.getCurrentUser().getId();
+        Paper paper = adminService.approvePaper(paperId, adminId, reason);
         return ResponseEntity.ok(ApiResponse.success("Paper approved successfully", paper));
     }
 
@@ -45,7 +49,8 @@ public class AdminController {
     public ResponseEntity<ApiResponse<Paper>> rejectPaper(
             @PathVariable Long paperId,
             @RequestParam String reason) {
-        Paper paper = adminService.rejectPaper(paperId, 1L, reason);
+        Long adminId = authenticatedUserResolver.getCurrentUser().getId();
+        Paper paper = adminService.rejectPaper(paperId, adminId, reason);
         return ResponseEntity.ok(ApiResponse.success("Paper rejected successfully", paper));
     }
 
@@ -54,7 +59,8 @@ public class AdminController {
     public ResponseEntity<ApiResponse<Paper>> requestReupload(
             @PathVariable Long paperId,
             @RequestParam String reason) {
-        Paper paper = adminService.requestReupload(paperId, 1L, reason);
+        Long adminId = authenticatedUserResolver.getCurrentUser().getId();
+        Paper paper = adminService.requestReupload(paperId, adminId, reason);
         return ResponseEntity.ok(ApiResponse.success("Re-upload requested successfully", paper));
     }
 
@@ -84,7 +90,8 @@ public class AdminController {
     public ResponseEntity<ApiResponse<User>> suspendUser(
             @PathVariable Long userId,
             @RequestParam String reason) {
-        User user = adminService.suspendUser(userId, 1L, reason);
+        Long adminId = authenticatedUserResolver.getCurrentUser().getId();
+        User user = adminService.suspendUser(userId, adminId, reason);
         return ResponseEntity.ok(ApiResponse.success("User suspended successfully", user));
     }
 
@@ -93,7 +100,8 @@ public class AdminController {
     public ResponseEntity<ApiResponse<User>> banUser(
             @PathVariable Long userId,
             @RequestParam String reason) {
-        User user = adminService.banUser(userId, 1L, reason);
+        Long adminId = authenticatedUserResolver.getCurrentUser().getId();
+        User user = adminService.banUser(userId, adminId, reason);
         return ResponseEntity.ok(ApiResponse.success("User banned successfully", user));
     }
 
@@ -102,7 +110,8 @@ public class AdminController {
     public ResponseEntity<ApiResponse<User>> reinstateUser(
             @PathVariable Long userId,
             @RequestParam String reason) {
-        User user = adminService.reinstateUser(userId, 1L, reason);
+        Long adminId = authenticatedUserResolver.getCurrentUser().getId();
+        User user = adminService.reinstateUser(userId, adminId, reason);
         return ResponseEntity.ok(ApiResponse.success("User reinstated successfully", user));
     }
 }

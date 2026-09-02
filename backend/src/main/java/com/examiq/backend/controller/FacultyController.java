@@ -3,6 +3,7 @@ package com.examiq.backend.controller;
 import com.examiq.backend.dto.ApiResponse;
 import com.examiq.backend.entity.FacultyVerification;
 import com.examiq.backend.entity.Paper;
+import com.examiq.backend.security.AuthenticatedUserResolver;
 import com.examiq.backend.service.FacultyService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -16,9 +17,11 @@ import java.util.Map;
 public class FacultyController {
 
     private final FacultyService facultyService;
+    private final AuthenticatedUserResolver authenticatedUserResolver;
 
-    public FacultyController(FacultyService facultyService) {
+    public FacultyController(FacultyService facultyService, AuthenticatedUserResolver authenticatedUserResolver) {
         this.facultyService = facultyService;
+        this.authenticatedUserResolver = authenticatedUserResolver;
     }
 
     @GetMapping("/faculty/dashboard")
@@ -35,21 +38,25 @@ public class FacultyController {
     public ResponseEntity<ApiResponse<FacultyVerification>> submitVerification(
             @RequestParam(required = false) Long universityId,
             @RequestParam String documentsUrl) {
-        FacultyVerification verification = facultyService.submitVerificationRequest(1L, universityId, documentsUrl);
+        Long facultyId = authenticatedUserResolver.getCurrentUser().getId();
+        FacultyVerification verification = facultyService.submitVerificationRequest(facultyId, universityId,
+                documentsUrl);
         return ResponseEntity.ok(ApiResponse.success("Verification request submitted successfully", verification));
     }
 
     @GetMapping("/faculty/analytics")
     @PreAuthorize("hasRole('FACULTY')")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getAnalytics() {
-        Map<String, Object> analytics = facultyService.getFacultyAnalytics(1L);
+        Long facultyId = authenticatedUserResolver.getCurrentUser().getId();
+        Map<String, Object> analytics = facultyService.getFacultyAnalytics(facultyId);
         return ResponseEntity.ok(ApiResponse.success("Faculty analytics retrieved successfully", analytics));
     }
 
     @GetMapping("/faculty/uploads")
     @PreAuthorize("hasRole('FACULTY')")
     public ResponseEntity<ApiResponse<List<Paper>>> getFacultyUploads() {
-        List<Paper> papers = facultyService.getFacultyUploads(1L);
+        Long facultyId = authenticatedUserResolver.getCurrentUser().getId();
+        List<Paper> papers = facultyService.getFacultyUploads(facultyId);
         return ResponseEntity.ok(ApiResponse.success("Faculty uploads retrieved successfully", papers));
     }
 
@@ -63,7 +70,8 @@ public class FacultyController {
     @PutMapping("/admin/faculty-verification/{verificationId}/approve")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<FacultyVerification>> approveVerification(@PathVariable Long verificationId) {
-        FacultyVerification verification = facultyService.approveFacultyVerification(verificationId, 1L);
+        Long adminId = authenticatedUserResolver.getCurrentUser().getId();
+        FacultyVerification verification = facultyService.approveFacultyVerification(verificationId, adminId);
         return ResponseEntity.ok(ApiResponse.success("Faculty verification approved successfully", verification));
     }
 }

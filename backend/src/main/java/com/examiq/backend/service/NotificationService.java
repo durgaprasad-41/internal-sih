@@ -31,7 +31,9 @@ public class NotificationService {
         notification.setMessage(message);
         notification.setType(type);
         notification.setIsRead(false);
-        return notificationRepository.save(notification);
+        Notification saved = notificationRepository.save(notification);
+        System.out.println("Notification created: " + saved.getTitle() + " for user: " + user.getUsername());
+        return saved;
     }
 
     public List<Notification> getUserNotifications(Long userId) {

@@ -34,3 +34,9 @@ uploads/
 
 # MySQL data
 mysql-data/
+
+# Temporary / generated files
+backend/out.txt
+backend/storage-test/
+netstat
+query

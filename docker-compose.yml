@@ -36,7 +36,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:-jdbc:mysql://mysql:3306/examiq}
       DATABASE_USERNAME: ${DATABASE_USERNAME:-root}
       DATABASE_PASSWORD: ${DATABASE_PASSWORD:-root}
-      JWT_SECRET: ${JWT_SECRET:-ExamiqJWTSecretKeyForDevelopmentOnly2026!}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in your .env file before starting the stack}
       AI_SERVICE_URL: ${AI_SERVICE_URL:-http://ai-service:8001}
       FILE_STORAGE_PATH: ${FILE_STORAGE_PATH:-/app/uploads}
     ports:

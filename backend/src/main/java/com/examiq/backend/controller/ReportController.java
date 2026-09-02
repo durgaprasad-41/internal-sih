@@ -2,6 +2,7 @@ package com.examiq.backend.controller;
 
 import com.examiq.backend.dto.ApiResponse;
 import com.examiq.backend.entity.Report;
+import com.examiq.backend.security.AuthenticatedUserResolver;
 import com.examiq.backend.service.ReportService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -14,9 +15,11 @@ import java.util.List;
 public class ReportController {
 
     private final ReportService reportService;
+    private final AuthenticatedUserResolver authenticatedUserResolver;
 
-    public ReportController(ReportService reportService) {
+    public ReportController(ReportService reportService, AuthenticatedUserResolver authenticatedUserResolver) {
         this.reportService = reportService;
+        this.authenticatedUserResolver = authenticatedUserResolver;
     }
 
     @PostMapping("/papers/{paperId}/report")
@@ -25,7 +28,8 @@ public class ReportController {
             @PathVariable Long paperId,
             @RequestParam String reportType,
             @RequestParam String description) {
-        Report report = reportService.reportPaper(paperId, 1L, reportType, description);
+        Long userId = authenticatedUserResolver.getCurrentUser().getId();
+        Report report = reportService.reportPaper(paperId, userId, reportType, description);
         return ResponseEntity.ok(ApiResponse.success("Paper reported successfully", report));
     }
 

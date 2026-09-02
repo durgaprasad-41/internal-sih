@@ -3,15 +3,19 @@ package com.examiq.backend.service;
 import com.examiq.backend.dto.PaperDto;
 import com.examiq.backend.entity.Paper;
 import com.examiq.backend.entity.Subject;
+import com.examiq.backend.entity.SubjectAlias;
 import com.examiq.backend.entity.University;
 import com.examiq.backend.entity.Upload;
 import com.examiq.backend.entity.User;
+import com.examiq.backend.entity.VerificationLog;
 import com.examiq.backend.repository.PaperRepository;
 import com.examiq.backend.repository.RatingRepository;
+import com.examiq.backend.repository.SubjectAliasRepository;
 import com.examiq.backend.repository.SubjectRepository;
 import com.examiq.backend.repository.UniversityRepository;
 import com.examiq.backend.repository.UploadRepository;
 import com.examiq.backend.repository.UserRepository;
+import com.examiq.backend.repository.VerificationLogRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -25,9 +29,12 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
@@ -39,6 +46,10 @@ public class PaperService {
     private final UserRepository userRepository;
     private final UploadRepository uploadRepository;
     private final RatingRepository ratingRepository;
+    private final NotificationService notificationService;
+    private final SubjectAliasRepository subjectAliasRepository;
+    private final VerificationLogRepository verificationLogRepository;
+    private final UploadVerificationService uploadVerificationService;
 
     @Value("${app.storage.path:./storage}")
     private String storagePath;
@@ -54,6 +65,10 @@ public class PaperService {
             UserRepository userRepository,
             UploadRepository uploadRepository,
             RatingRepository ratingRepository,
+            NotificationService notificationService,
+            SubjectAliasRepository subjectAliasRepository,
+            VerificationLogRepository verificationLogRepository,
+            UploadVerificationService uploadVerificationService,
             RestTemplate restTemplate) {
         this.paperRepository = paperRepository;
         this.subjectRepository = subjectRepository;
@@ -61,6 +76,10 @@ public class PaperService {
         this.userRepository = userRepository;
         this.uploadRepository = uploadRepository;
         this.ratingRepository = ratingRepository;
+        this.notificationService = notificationService;
+        this.subjectAliasRepository = subjectAliasRepository;
+        this.verificationLogRepository = verificationLogRepository;
+        this.uploadVerificationService = uploadVerificationService;
         this.restTemplate = restTemplate;
     }
 
@@ -89,16 +108,7 @@ public class PaperService {
         User uploader = userRepository.findByUsername(username)
                 .orElseThrow(() -> new IllegalArgumentException("Uploader not found"));
 
-        Subject subject = subjectRepository.findByNameIgnoreCase(normalizedSubject)
-                .or(() -> subjectRepository.findByCanonicalNameIgnoreCase(normalizedSubject))
-                .or(() -> subjectRepository.findByName(normalizedSubject))
-                .or(() -> subjectRepository.findByCanonicalName(normalizedSubject))
-                .orElseGet(() -> {
-                    Subject newSubject = new Subject();
-                    newSubject.setName(normalizedSubject);
-                    newSubject.setCanonicalName(normalizedSubject);
-                    return subjectRepository.save(newSubject);
-                });
+        Subject subject = resolveSubject(normalizedSubject);
 
         University university = universityRepository.findByNameIgnoreCase(normalizedUniversity)
                 .orElseGet(() -> {
@@ -107,11 +117,42 @@ public class PaperService {
                     return universityRepository.save(newUniversity);
                 });
 
-        // Check for duplicate papers
-        if (paperRepository.existsByTitleAndSubjectAndUniversityAndYearAndExamType(
-                title, subject, university, year, examType)) {
-            throw new IllegalArgumentException(
-                    "A paper with the same title, subject, university, year, and exam type already exists");
+        // Check for duplicate papers - accept as REJECTED instead of throwing error
+        boolean isDuplicate = paperRepository.existsByTitleAndSubjectAndUniversityAndYearAndExamType(
+                title, subject, university, year, examType);
+
+        if (isDuplicate) {
+            // Create notification for duplicate attempt
+            try {
+                notificationService.createNotification(
+                        uploader.getId(),
+                        "Duplicate Paper Upload",
+                        "Your paper '" + title + "' was marked as REJECTED because it already exists in the database.",
+                        "DUPLICATE_REJECTED");
+            } catch (Exception e) {
+                System.err.println("Failed to create notification: " + e.getMessage());
+            }
+        }
+
+        com.examiq.backend.dto.VerificationResult verificationResult = uploadVerificationService.verifyUpload(title,
+                examType);
+        if (!verificationResult.isPassed()) {
+            Paper rejectedPaper = createRejectedPaperRecord(file, title, subject, university, uploader, year, examType,
+                    author, fileHashForRejectedUpload(file));
+            createVerificationLog(rejectedPaper, null, verificationResult.getStage(), verificationResult.getScore(),
+                    verificationResult.getMessage());
+            try {
+                String notificationTitle = "Upload Rejected";
+                if ("EXAM_TYPE_CHECK".equals(verificationResult.getStage())) {
+                    notificationTitle = "Exam Type Mismatch";
+                }
+                notificationService.createNotification(uploader.getId(), notificationTitle,
+                        verificationResult.getMessage(),
+                        "UPLOAD_REJECTED");
+            } catch (Exception e) {
+                System.err.println("Failed to create notification: " + e.getMessage());
+            }
+            return toDto(rejectedPaper);
         }
 
         // Check subject relevance using AI service and auto-approve if relevant
@@ -126,21 +167,46 @@ public class PaperService {
                     java.util.Map.class);
             if (response != null && response.containsKey("data")) {
                 java.util.Map<String, Object> data = (java.util.Map<String, Object>) response.get("data");
-                Double matchScore = (Double) data.get("match_score");
+                Double matchScore = data.get("match_score") instanceof Number
+                        ? ((Number) data.get("match_score")).doubleValue()
+                        : null;
+                boolean obviousMismatch = isObviousSubjectMismatch(title, subject.getCanonicalName());
+                if (obviousMismatch) {
+                    String rejectionMessage = "Paper does not appear to be relevant to the subject "
+                            + subject.getCanonicalName() + ". The uploaded content is for a different subject.";
+                    Paper rejectedPaper = createRejectedPaperRecord(file, title, subject, university, uploader, year,
+                            examType, author, fileHashForRejectedUpload(file));
+                    createVerificationLog(rejectedPaper, null, "SUBJECT_RELEVANCE_CHECK", matchScore,
+                            rejectionMessage);
+                    try {
+                        notificationService.createNotification(uploader.getId(), "Paper Not Related to Subject",
+                                rejectionMessage, "SUBJECT_REJECTED");
+                    } catch (Exception e) {
+                        System.err.println("Failed to create notification: " + e.getMessage());
+                    }
+                    return toDto(rejectedPaper);
+                }
                 if (matchScore != null && matchScore >= 0.7) {
-                    // High confidence - auto-approve
                     aiApproved = true;
                 } else if (matchScore != null && matchScore < 0.5) {
-                    // Low confidence - reject
-                    throw new IllegalArgumentException("Paper does not appear to be relevant to the subject "
-                            + subject.getCanonicalName() + ". Match score: " + matchScore);
+                    String rejectionMessage = "Paper does not appear to be relevant to the subject "
+                            + subject.getCanonicalName() + ". Match score: " + matchScore;
+                    Paper rejectedPaper = createRejectedPaperRecord(file, title, subject, university, uploader, year,
+                            examType, author, fileHashForRejectedUpload(file));
+                    createVerificationLog(rejectedPaper, null, "SUBJECT_RELEVANCE_CHECK", matchScore,
+                            rejectionMessage);
+                    try {
+                        notificationService.createNotification(uploader.getId(), "Paper Not Related to Subject",
+                                rejectionMessage, "SUBJECT_REJECTED");
+                    } catch (Exception e) {
+                        System.err.println("Failed to create notification: " + e.getMessage());
+                    }
+                    return toDto(rejectedPaper);
                 }
-                // Medium confidence (0.5-0.7) - keep as PENDING for admin review
             }
         } catch (IllegalArgumentException e) {
             throw e;
         } catch (Exception e) {
-            // Log warning but don't fail upload if AI service is unavailable
             System.out.println("Warning: AI subject check failed: " + e.getMessage());
         }
 
@@ -156,10 +222,45 @@ public class PaperService {
             String fileHash = calculateFileHash(target);
 
             // Check for exact duplicate by file hash
-            if (paperRepository.existsByFileHash(fileHash)) {
+            boolean isFileDuplicate = paperRepository.existsByFileHash(fileHash);
+            if (isFileDuplicate) {
                 Files.deleteIfExists(target);
-                throw new IllegalArgumentException(
-                        "This file has already been uploaded (duplicate detected by file hash)");
+                // Create notification for duplicate file attempt
+                try {
+                    notificationService.createNotification(
+                            uploader.getId(),
+                            "Duplicate File Upload",
+                            "Your file was marked as REJECTED because it already exists in the database (detected by file hash).",
+                            "DUPLICATE_FILE_REJECTED");
+                } catch (Exception e) {
+                    System.err.println("Failed to create notification: " + e.getMessage());
+                }
+                // Create paper record with REJECTED status
+                Paper paper = new Paper();
+                paper.setTitle(title);
+                paper.setSubject(subject);
+                paper.setUniversity(university);
+                paper.setUploader(uploader);
+                paper.setYear(year);
+                paper.setExamType(examType);
+                paper.setAuthor(author != null ? author : uploader.getFullName());
+                paper.setStatus("REJECTED");
+                paper.setFileUrl(null);
+                paper.setFileHash(fileHash);
+                Paper savedPaper = paperRepository.save(paper);
+
+                Upload upload = new Upload();
+                upload.setPaper(savedPaper);
+                upload.setUploadedBy(uploader);
+                upload.setOriginalFileName(file.getOriginalFilename());
+                upload.setStoredPath(null);
+                upload.setFileHash(fileHash);
+                upload.setMimeType(file.getContentType());
+                upload.setFileSize(file.getSize());
+                upload.setUploadStatus("REJECTED");
+                uploadRepository.save(upload);
+
+                return toDto(savedPaper);
             }
 
             Paper paper = new Paper();
@@ -170,7 +271,16 @@ public class PaperService {
             paper.setYear(year);
             paper.setExamType(examType);
             paper.setAuthor(author != null ? author : uploader.getFullName());
-            paper.setStatus(aiApproved ? "APPROVED" : "PENDING");
+
+            // Set status based on duplicate check and AI approval
+            if (isDuplicate) {
+                paper.setStatus("REJECTED");
+            } else if (aiApproved) {
+                paper.setStatus("APPROVED");
+            } else {
+                paper.setStatus("PENDING");
+            }
+
             paper.setFileUrl("/files/" + fileName);
             paper.setFileHash(fileHash);
             Paper savedPaper = paperRepository.save(paper);
@@ -183,7 +293,7 @@ public class PaperService {
             upload.setFileHash(fileHash);
             upload.setMimeType(file.getContentType());
             upload.setFileSize(file.getSize());
-            upload.setUploadStatus("COMPLETED");
+            upload.setUploadStatus(isDuplicate ? "REJECTED" : "COMPLETED");
             uploadRepository.save(upload);
 
             return toDto(savedPaper);
@@ -248,8 +358,174 @@ public class PaperService {
         return avg == 0.0 ? 0.0 : Math.round(avg * 10.0) / 10.0;
     }
 
+    private Paper createRejectedPaperRecord(MultipartFile file, String title, Subject subject, University university,
+            User uploader, Integer year, String examType, String author, String fileHash) {
+        Paper paper = new Paper();
+        paper.setTitle(title);
+        paper.setSubject(subject);
+        paper.setUniversity(university);
+        paper.setUploader(uploader);
+        paper.setYear(year);
+        paper.setExamType(examType);
+        paper.setAuthor(author != null ? author : uploader.getFullName());
+        paper.setStatus("REJECTED");
+        paper.setFileUrl(null);
+        paper.setFileHash(fileHash);
+        Paper savedPaper = paperRepository.save(paper);
+
+        Upload upload = new Upload();
+        upload.setPaper(savedPaper);
+        upload.setUploadedBy(uploader);
+        upload.setOriginalFileName(file != null ? file.getOriginalFilename() : title);
+        upload.setStoredPath(null);
+        upload.setFileHash(fileHash);
+        upload.setMimeType(file != null ? file.getContentType() : "application/octet-stream");
+        upload.setFileSize(file != null ? file.getSize() : 0L);
+        upload.setUploadStatus("REJECTED");
+        uploadRepository.save(upload);
+        return savedPaper;
+    }
+
+    private void createVerificationLog(Paper paper, Upload upload, String stage, Double score, String details) {
+        VerificationLog log = new VerificationLog();
+        log.setPaper(paper);
+        log.setUpload(upload);
+        log.setStage(stage);
+        log.setScore(score);
+        log.setDetailsJson(details);
+        verificationLogRepository.save(log);
+    }
+
+    private String fileHashForRejectedUpload(MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            return "";
+        }
+        try {
+            return calculateFileHash(file.getResource().getFile().toPath());
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private boolean isObviousSubjectMismatch(String title, String selectedSubject) {
+        if (title == null || title.isBlank() || selectedSubject == null || selectedSubject.isBlank()) {
+            return false;
+        }
+
+        String normalizedTitle = normalizeSubjectKey(title);
+        String selectedKey = normalizeSubjectKey(selectedSubject);
+
+        java.util.Map<String, java.util.List<String>> subjectKeywords = new java.util.HashMap<>();
+        subjectKeywords.put("database management systems", java.util.List.of(
+                "database", "dbms", "sql", "normalization", "transaction", "index", "query", "er model",
+                "entity relationship", "schema"));
+        subjectKeywords.put("operating systems", java.util.List.of(
+                "operating system", "os", "process", "thread", "scheduler", "deadlock", "memory", "kernel"));
+        subjectKeywords.put("computer networks", java.util.List.of(
+                "network", "tcp", "ip", "routing", "protocol", "socket", "osi", "switch", "routing table"));
+        subjectKeywords.put("data structures", java.util.List.of(
+                "stack", "queue", "tree", "graph", "heap", "linked list", "hash map", "algorithm"));
+
+        java.util.List<String> selectedTerms = subjectKeywords.getOrDefault(selectedKey,
+                java.util.List.of(selectedKey));
+        java.util.List<String> otherTerms = subjectKeywords.entrySet().stream()
+                .filter(entry -> !entry.getKey().equals(selectedKey))
+                .flatMap(entry -> entry.getValue().stream())
+                .toList();
+
+        boolean selectedMatch = selectedTerms.stream().anyMatch(normalizedTitle::contains);
+        boolean otherMatch = otherTerms.stream().anyMatch(normalizedTitle::contains);
+        return otherMatch && !selectedMatch;
+    }
+
     private String normalizeOptionalText(String value, String defaultValue) {
         return (value == null || value.isBlank()) ? defaultValue : value.trim();
+    }
+
+    private Subject resolveSubject(String subjectName) {
+        String normalized = normalizeOptionalText(subjectName, "General");
+        String canonicalName = canonicalizeSubjectName(normalized);
+
+        return subjectRepository.findByNameIgnoreCase(normalized)
+                .or(() -> subjectRepository.findByCanonicalNameIgnoreCase(normalized))
+                .or(() -> subjectRepository.findByName(canonicalName))
+                .or(() -> subjectRepository.findByCanonicalName(canonicalName))
+                .or(() -> subjectRepository.findByNameIgnoreCase(canonicalName))
+                .or(() -> subjectRepository.findByCanonicalNameIgnoreCase(canonicalName))
+                .or(() -> subjectAliasRepository.findByAliasIgnoreCase(normalized)
+                        .map(SubjectAlias::getSubject))
+                .or(() -> subjectAliasRepository.findByAliasIgnoreCase(canonicalName)
+                        .map(SubjectAlias::getSubject))
+                .or(() -> findMatchingSubjectByCanonicalizedName(normalized, canonicalName))
+                .orElseGet(() -> {
+                    Subject newSubject = new Subject();
+                    newSubject.setName(canonicalName);
+                    newSubject.setCanonicalName(canonicalName);
+                    return subjectRepository.save(newSubject);
+                });
+    }
+
+    private Optional<Subject> findMatchingSubjectByCanonicalizedName(String rawName, String canonicalName) {
+        String rawKey = normalizeSubjectKey(rawName);
+        String canonicalKey = normalizeSubjectKey(canonicalName);
+
+        return subjectRepository.findAll().stream()
+                .filter(subject -> matchesSubjectVariant(subject, rawKey, canonicalKey))
+                .findFirst();
+    }
+
+    private boolean matchesSubjectVariant(Subject subject, String rawKey, String canonicalKey) {
+        List<String> candidateKeys = new ArrayList<>();
+
+        if (subject.getName() != null) {
+            candidateKeys.add(normalizeSubjectKey(subject.getName()));
+            candidateKeys.add(normalizeSubjectKey(canonicalizeSubjectName(subject.getName())));
+        }
+        if (subject.getCanonicalName() != null) {
+            candidateKeys.add(normalizeSubjectKey(subject.getCanonicalName()));
+            candidateKeys.add(normalizeSubjectKey(canonicalizeSubjectName(subject.getCanonicalName())));
+        }
+        if (subjectAliasRepository.findBySubject(subject) != null) {
+            subjectAliasRepository.findBySubject(subject).forEach(alias -> {
+                if (alias.getAlias() != null) {
+                    candidateKeys.add(normalizeSubjectKey(alias.getAlias()));
+                    candidateKeys.add(normalizeSubjectKey(canonicalizeSubjectName(alias.getAlias())));
+                }
+            });
+        }
+
+        return candidateKeys.stream().anyMatch(key -> key.equals(rawKey) || key.equals(canonicalKey));
+    }
+
+    private String normalizeSubjectKey(String value) {
+        if (value == null || value.isBlank()) {
+            return "general";
+        }
+        return value.trim().replaceAll("\\s+", " ").replaceAll("[^a-zA-Z0-9]+", " ")
+                .trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String canonicalizeSubjectName(String value) {
+        if (value == null || value.isBlank()) {
+            return "General";
+        }
+
+        String normalized = value.trim().replaceAll("\\s+", " ");
+        String key = normalizeSubjectKey(normalized);
+
+        if (key.equals("database management systems") || key.equals("database systems") || key.equals("dbms")) {
+            return "Database Management Systems";
+        }
+        if (key.equals("operating systems") || key.equals("os") || key.equals("operating system")) {
+            return "Operating Systems";
+        }
+        if (key.equals("computer networks") || key.equals("cn") || key.equals("computer network")) {
+            return "Computer Networks";
+        }
+        if (key.equals("general")) {
+            return "General";
+        }
+        return normalized;
     }
 
     private boolean matchesSearch(Paper paper, String query) {
@@ -262,11 +538,20 @@ public class PaperService {
                 : "";
         String examType = paper.getExamType() == null ? "" : paper.getExamType().toLowerCase();
         String author = paper.getAuthor() == null ? "" : paper.getAuthor().toLowerCase();
+
+        // Check if query matches any subject alias
+        boolean matchesSubjectAlias = false;
+        if (paper.getSubject() != null) {
+            matchesSubjectAlias = subjectAliasRepository.findBySubject(paper.getSubject()).stream()
+                    .anyMatch(alias -> alias.getAlias().toLowerCase().contains(query));
+        }
+
         return title.contains(query)
                 || subject.contains(query)
                 || university.contains(query)
                 || examType.contains(query)
-                || author.contains(query);
+                || author.contains(query)
+                || matchesSubjectAlias;
     }
 
     private PaperDto toDto(Paper paper) {

@@ -39,7 +39,14 @@ export default function UploadPage() {
           Authorization: `Bearer ${localStorage.getItem('token')}`
         }
       });
-      setMessage('Paper uploaded successfully!');
+
+      const result = response?.data?.data;
+      if (result?.status === 'REJECTED') {
+        setMessage('Upload rejected: this paper does not match the selected subject and was not added to your uploads.');
+      } else {
+        setMessage('Paper uploaded successfully!');
+      }
+
       setFormData({ title: '', subject: '', university: '', year: '', examType: '', author: '' });
       setFile(null);
     } catch (error) {

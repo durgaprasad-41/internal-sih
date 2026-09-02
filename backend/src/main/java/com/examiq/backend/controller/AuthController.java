@@ -7,6 +7,7 @@ import com.examiq.backend.dto.RegisterRequest;
 import com.examiq.backend.service.UserService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -27,5 +28,11 @@ public class AuthController {
     @PostMapping("/login")
     public ResponseEntity<ApiResponse<AuthResponse>> login(@Valid @RequestBody AuthRequest request) {
         return ResponseEntity.ok(ApiResponse.success("Login successful", userService.login(request)));
+    }
+
+    @PostMapping("/admin/create-admin")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<AuthResponse>> createAdmin(@Valid @RequestBody RegisterRequest request) {
+        return ResponseEntity.ok(ApiResponse.success("Admin created successfully", userService.createAdmin(request)));
     }
 }

@@ -42,7 +42,13 @@ public class UserService {
             throw new IllegalArgumentException("Email already exists");
         }
 
-        Role role = roleRepository.findByName(request.getRole().toUpperCase())
+        // Prevent ADMIN role registration through public endpoint
+        String requestedRole = request.getRole().toUpperCase();
+        if ("ADMIN".equals(requestedRole)) {
+            throw new IllegalArgumentException("Admin registration is not allowed through public registration. Contact system administrator.");
+        }
+
+        Role role = roleRepository.findByName(requestedRole)
                 .orElseThrow(() -> new IllegalArgumentException("Invalid role"));
 
         User user = new User();
@@ -75,5 +81,31 @@ public class UserService {
                                 "ROLE_" + user.getRole().getName()))));
 
         return new AuthResponse(token, user.getUsername(), user.getRole().getName());
+    }
+
+    public AuthResponse createAdmin(RegisterRequest request) {
+        if (userRepository.existsByUsername(request.getUsername())) {
+            throw new IllegalArgumentException("Username already exists");
+        }
+        if (userRepository.existsByEmail(request.getEmail())) {
+            throw new IllegalArgumentException("Email already exists");
+        }
+
+        Role adminRole = roleRepository.findByName("ADMIN")
+                .orElseThrow(() -> new IllegalArgumentException("Admin role not found"));
+
+        User user = new User();
+        user.setUsername(request.getUsername());
+        user.setEmail(request.getEmail());
+        user.setPassword(passwordEncoder.encode(request.getPassword()));
+        user.setFullName(request.getFullName());
+        user.setRole(adminRole);
+        user.setStatus("ACTIVE");
+        userRepository.save(user);
+
+        AuthRequest authRequest = new AuthRequest();
+        authRequest.setUsername(request.getUsername());
+        authRequest.setPassword(request.getPassword());
+        return login(authRequest);
     }
 }

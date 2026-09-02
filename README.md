@@ -22,9 +22,9 @@ EXAMIQ is an AI-powered previous-question-paper repository and academic intellig
 
 ## Local startup
 
-1. Copy `.env.example` to `.env` and adjust values
-2. Start MySQL and the services with Docker Compose
-3. Start the backend via Maven
+1. Copy `.env.example` to `.env` and adjust values — in particular, set `JWT_SECRET` to a real secret. The backend requires this and will refuse to start without it (no insecure default is built in).
+2. Start MySQL and the services with Docker Compose (Docker Compose reads `.env` automatically)
+3. Start the backend via Maven — if running it directly instead of via Docker Compose, export the variables from `.env` into your shell first (e.g. `export $(grep -v '^#' .env | xargs)` on macOS/Linux, or set them in your IDE run configuration), since Spring Boot does not read `.env` files on its own
 4. Start the AI service via uvicorn or FastAPI
 5. Start the frontend via Vite
 
