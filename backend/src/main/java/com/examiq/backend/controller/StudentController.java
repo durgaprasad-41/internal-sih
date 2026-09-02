@@ -1,8 +1,12 @@
 package com.examiq.backend.controller;
 
 import com.examiq.backend.dto.ApiResponse;
+import com.examiq.backend.dto.SmartRevisionRequest;
+import com.examiq.backend.dto.SmartRevisionResponseDto;
 import com.examiq.backend.entity.User;
+import com.examiq.backend.service.SmartRevisionService;
 import com.examiq.backend.service.StudentDashboardService;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -17,9 +21,20 @@ import java.util.Map;
 public class StudentController {
 
     private final StudentDashboardService studentDashboardService;
+    private final SmartRevisionService smartRevisionService;
 
-    public StudentController(StudentDashboardService studentDashboardService) {
+    public StudentController(StudentDashboardService studentDashboardService,
+            SmartRevisionService smartRevisionService) {
         this.studentDashboardService = studentDashboardService;
+        this.smartRevisionService = smartRevisionService;
+    }
+
+    @PostMapping("/student/smart-revision")
+    @PreAuthorize("hasRole('STUDENT')")
+    public ResponseEntity<ApiResponse<SmartRevisionResponseDto>> smartRevision(
+            @Valid @RequestBody SmartRevisionRequest request) {
+        return ResponseEntity.ok(ApiResponse.success("Smart revision plan generated",
+                smartRevisionService.recommend(request)));
     }
 
     @GetMapping("/student/dashboard")

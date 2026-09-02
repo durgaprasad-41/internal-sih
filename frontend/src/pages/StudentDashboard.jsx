@@ -147,6 +147,7 @@ export default function StudentDashboard() {
             <div className="card">
               <h2 className="mb-4 text-xl font-semibold">Quick actions</h2>
               <div className="space-y-3">
+                <button className="btn-primary w-full" onClick={() => navigate('/student/smart-revision')}>Smart Revision</button>
                 <button className="btn-secondary w-full" onClick={() => navigate('/student/uploads')}>My uploads</button>
                 <button className="btn-secondary w-full" onClick={() => navigate('/student/bookmarks')}>Bookmarks</button>
                 <button className="btn-secondary w-full" onClick={() => navigate('/student/profile')}>Profile</button>
