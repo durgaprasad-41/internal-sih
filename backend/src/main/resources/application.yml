@@ -19,8 +19,29 @@ spring:
     multipart:
       max-file-size: 20MB
       max-request-size: 25MB
+  mail:
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
 
 app:
+  mail:
+    # Off by default so local dev never needs real SMTP credentials - the
+    # admin OTP is logged to the backend console instead (clearly labeled).
+    # Set MAIL_ENABLED=true plus MAIL_HOST/MAIL_USERNAME/MAIL_PASSWORD to
+    # send real emails.
+    enabled: ${MAIL_ENABLED:false}
+    from: ${MAIL_FROM:no-reply@examiq.local}
   jwt:
     # JWT_SECRET must be set as an environment variable — there is no built-in
     # default. Copy .env.example to .env and set a real value (see README).

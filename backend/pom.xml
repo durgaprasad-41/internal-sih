@@ -57,6 +57,12 @@
             <artifactId>mysql-connector-j</artifactId>            <version>8.4.0</version>            <scope>runtime</scope>
         </dependency>
 
+        <!-- Email (admin login OTP) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
+
         <!-- JWT -->
         <dependency>
             <groupId>io.jsonwebtoken</groupId>

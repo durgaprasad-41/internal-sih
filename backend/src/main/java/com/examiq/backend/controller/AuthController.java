@@ -4,6 +4,7 @@ import com.examiq.backend.dto.ApiResponse;
 import com.examiq.backend.dto.AuthRequest;
 import com.examiq.backend.dto.AuthResponse;
 import com.examiq.backend.dto.RegisterRequest;
+import com.examiq.backend.dto.VerifyOtpRequest;
 import com.examiq.backend.service.UserService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -27,7 +28,14 @@ public class AuthController {
 
     @PostMapping("/login")
     public ResponseEntity<ApiResponse<AuthResponse>> login(@Valid @RequestBody AuthRequest request) {
-        return ResponseEntity.ok(ApiResponse.success("Login successful", userService.login(request)));
+        AuthResponse response = userService.login(request);
+        String message = response.isOtpRequired() ? "Verification code sent" : "Login successful";
+        return ResponseEntity.ok(ApiResponse.success(message, response));
+    }
+
+    @PostMapping("/verify-otp")
+    public ResponseEntity<ApiResponse<AuthResponse>> verifyOtp(@Valid @RequestBody VerifyOtpRequest request) {
+        return ResponseEntity.ok(ApiResponse.success("Login successful", userService.verifyOtp(request)));
     }
 
     @PostMapping("/admin/create-admin")
