@@ -11,6 +11,10 @@ export default function PaperDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [bookmarked, setBookmarked] = useState(false);
+  const [myScore, setMyScore] = useState(0);
+  const [myComment, setMyComment] = useState('');
+  const [ratingMessage, setRatingMessage] = useState('');
+  const [submittingRating, setSubmittingRating] = useState(false);
 
   useEffect(() => {
     const fetchPaper = async () => {
@@ -31,6 +35,34 @@ export default function PaperDetailPage() {
       fetchPaper();
     }
   }, [id]);
+
+  const handleSubmitRating = async () => {
+    if (!myScore) {
+      setRatingMessage('Select a star rating first.');
+      return;
+    }
+    setSubmittingRating(true);
+    setRatingMessage('');
+    try {
+      await axios.post(
+        `${API_BASE_URL}/papers/${id}/rate`,
+        null,
+        {
+          params: { score: myScore, comment: myComment || undefined },
+          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+        }
+      );
+      setRatingMessage('Thanks! Your rating was submitted.');
+      const refreshed = await axios.get(`${API_BASE_URL}/papers/${id}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+      setPaper(refreshed.data.data);
+    } catch (err) {
+      setRatingMessage(err.response?.data?.message || 'Unable to submit your rating.');
+    } finally {
+      setSubmittingRating(false);
+    }
+  };
 
   const handleBookmarkToggle = async () => {
     if (!paper) return;
@@ -97,6 +129,34 @@ export default function PaperDetailPage() {
               Open file
             </a>
           )}
+        </div>
+
+        <div className="mt-6 rounded-lg border p-4">
+          <p className="mb-2 text-sm font-medium text-slate-700">Rate this paper</p>
+          <div className="flex gap-1">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => setMyScore(n)}
+                className={`text-2xl ${n <= myScore ? 'text-yellow-500' : 'text-slate-300'}`}
+                aria-label={`Rate ${n} star${n > 1 ? 's' : ''}`}
+              >
+                ★
+              </button>
+            ))}
+          </div>
+          <textarea
+            className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            rows={2}
+            placeholder="Optional comment"
+            value={myComment}
+            onChange={(e) => setMyComment(e.target.value)}
+          />
+          <button className="btn-primary mt-2" disabled={submittingRating} onClick={handleSubmitRating}>
+            {submittingRating ? 'Submitting...' : 'Submit rating'}
+          </button>
+          {ratingMessage && <p className="mt-2 text-sm text-slate-600">{ratingMessage}</p>}
         </div>
       </div>
     </div>

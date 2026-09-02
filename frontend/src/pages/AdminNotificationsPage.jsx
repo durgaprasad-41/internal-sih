@@ -61,7 +61,7 @@ export default function AdminNotificationsPage() {
           {loading ? (
             <p className="text-slate-500">Loading...</p>
           ) : items.length === 0 ? (
-            <p className="text-slate-500">No notifications.</p>
+            <p className="text-slate-500">No notifications yet.</p>
           ) : (
             <div className="space-y-3">
               {items.map((n) => (

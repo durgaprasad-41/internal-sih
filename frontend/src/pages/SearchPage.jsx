@@ -10,27 +10,42 @@ export default function SearchPage() {
   const [query, setQuery] = useState('');
   const [papers, setPapers] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [searchError, setSearchError] = useState('');
+  const [myScores, setMyScores] = useState({});
+  const [submittingRatingId, setSubmittingRatingId] = useState(null);
+  const [ratingMessages, setRatingMessages] = useState({});
 
-  const handleSearch = async (nextQuery = query) => {
-    const trimmed = (nextQuery || '').trim();
+  // nextQuery must default to a string, not the event object React's onClick
+  // passes when a handler is wired directly as onClick={handleSearch}.
+  const handleSearch = async (nextQuery) => {
+    const value = typeof nextQuery === 'string' ? nextQuery : query;
+    const trimmed = value.trim();
     if (!trimmed) {
       setPapers([]);
+      setHasSearched(false);
+      setSearchError('');
       setSearchParams({});
       return;
     }
 
     setLoading(true);
+    setSearchError('');
     try {
       setSearchParams({ q: trimmed });
+      console.log('[SearchPage] GET /papers/search', { q: trimmed });
       const response = await axios.get(`${API_BASE_URL}/papers/search`, {
         params: { q: trimmed },
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
       });
+      console.log('[SearchPage] search response', response.data);
       setPapers(response.data.data || []);
     } catch (error) {
-      console.error('Search error:', error);
+      console.error('[SearchPage] search request failed', error);
       setPapers([]);
+      setSearchError(error.response?.data?.message || 'Search failed. Please try again.');
     }
+    setHasSearched(true);
     setLoading(false);
   };
 
@@ -45,6 +60,31 @@ export default function SearchPage() {
   const handleKeyPress = (e) => {
     if (e.key === 'Enter') {
       handleSearch(query);
+    }
+  };
+
+  const submitRating = async (paperId) => {
+    const score = myScores[paperId];
+    if (!score) {
+      setRatingMessages((prev) => ({ ...prev, [paperId]: 'Select a star rating first.' }));
+      return;
+    }
+    setSubmittingRatingId(paperId);
+    try {
+      await axios.post(`${API_BASE_URL}/papers/${paperId}/rate`, null, {
+        params: { score },
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+      const { data } = await axios.get(`${API_BASE_URL}/papers/${paperId}/average-rating`);
+      setPapers((prev) => prev.map((p) => (p.id === paperId ? { ...p, averageRating: data.data } : p)));
+      setRatingMessages((prev) => ({ ...prev, [paperId]: 'Thanks for rating!' }));
+    } catch (err) {
+      setRatingMessages((prev) => ({
+        ...prev,
+        [paperId]: err.response?.data?.message || 'Unable to submit your rating.'
+      }));
+    } finally {
+      setSubmittingRatingId(null);
     }
   };
 
@@ -66,12 +106,14 @@ export default function SearchPage() {
               onKeyPress={handleKeyPress}
             />
             <div className="flex gap-4">
-              <button className="btn-primary flex-1" onClick={handleSearch} disabled={loading}>
+              <button className="btn-primary flex-1" onClick={() => handleSearch(query)} disabled={loading}>
                 {loading ? 'Searching...' : 'Search'}
               </button>
               <button className="btn-secondary" onClick={() => {
                 setQuery('');
                 setPapers([]);
+                setHasSearched(false);
+                setSearchError('');
               }}>
                 Clear
               </button>
@@ -99,12 +141,47 @@ export default function SearchPage() {
                     <button className="mt-3 btn-primary" onClick={() => navigate(`/paper/${paper.id}`)}>View paper</button>
                   </div>
                 </div>
+
+                <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                  <span className="text-sm text-slate-500">Rate this paper:</span>
+                  <div className="flex gap-1">
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setMyScores((prev) => ({ ...prev, [paper.id]: n }))}
+                        className={`text-xl leading-none ${
+                          n <= (myScores[paper.id] || 0) ? 'text-yellow-500' : 'text-slate-300'
+                        }`}
+                        aria-label={`Rate ${n} star${n > 1 ? 's' : ''}`}
+                      >
+                        ★
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    className="btn-secondary"
+                    disabled={submittingRatingId === paper.id}
+                    onClick={() => submitRating(paper.id)}
+                  >
+                    {submittingRatingId === paper.id ? 'Submitting...' : 'Submit rating'}
+                  </button>
+                  {ratingMessages[paper.id] && (
+                    <span className="text-sm text-slate-500">{ratingMessages[paper.id]}</span>
+                  )}
+                </div>
               </div>
             ))}
           </div>
         )}
 
-        {!loading && papers.length === 0 && query && (
+        {!loading && hasSearched && searchError && (
+          <div className="card text-center text-red-600">
+            <p>{searchError}</p>
+          </div>
+        )}
+
+        {!loading && hasSearched && !searchError && papers.length === 0 && (
           <div className="card text-center">
             <p className="text-slate-600">No papers found for "{query}"</p>
           </div>

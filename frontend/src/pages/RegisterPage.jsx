@@ -102,7 +102,6 @@ export default function RegisterPage() {
             >
               <option value="STUDENT">STUDENT</option>
               <option value="FACULTY">FACULTY</option>
-              <option value="ADMIN">ADMIN</option>
             </select>
           </div>
           <div className="md:col-span-2">
